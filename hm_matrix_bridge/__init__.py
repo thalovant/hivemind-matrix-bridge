@@ -193,10 +193,14 @@ def split_reply(text: str, limit: int = MAX_BODY_BYTES,
                 parts: int = MAX_REPLY_PARTS) -> List[str]:
     """``text`` as message bodies of at most ``limit`` UTF-8 bytes, at most ``parts`` of them.
 
-    Each part ends at its last line break or space when there is one in its
-    second half, never inside a character. What does not fit in ``parts``
-    messages is cut, and the last one ends with :data:`TRUNCATION_MARK`.
+    A part ends just after its last line break or space when that lies in
+    its second half; otherwise it is cut at ``limit`` bytes, which can split
+    a word but never a character. Nothing is dropped at a split: the parts
+    joined are the text. What does not fit in ``parts`` messages is cut, and
+    the last one ends with :data:`TRUNCATION_MARK` when the mark fits in
+    ``limit``.
     """
+    mark = TRUNCATION_MARK if len(TRUNCATION_MARK.encode("utf-8")) < limit else ""
     chunks: List[str] = []
     rest = text
     while rest:
@@ -204,15 +208,15 @@ def split_reply(text: str, limit: int = MAX_BODY_BYTES,
             chunks.append(rest)
             break
         if len(chunks) == parts - 1:
-            head = _utf8_prefix(rest, limit - len(TRUNCATION_MARK.encode("utf-8")))
-            chunks.append(head.rstrip() + TRUNCATION_MARK)
+            head = _utf8_prefix(rest, limit - len(mark.encode("utf-8")))
+            chunks.append(head.rstrip() + mark)
             break
         head = _utf8_prefix(rest, limit)
         cut = max(head.rfind("\n"), head.rfind(" "))
         if cut > len(head) // 2:
-            head = head[:cut]
-        chunks.append(head.rstrip())
-        rest = rest[len(head):].lstrip()
+            head = head[:cut + 1]  # the break or space stays with its part
+        chunks.append(head)
+        rest = rest[len(head):]
     return [chunk for chunk in chunks if chunk]
 
 
@@ -460,7 +464,8 @@ class HiveMindMatrixBridge:
         if sender is not None and sender is not threading.current_thread():
             sender.join(STOP_DRAIN_SECONDS)
             if sender.is_alive():
-                LOG.warning(f"stopping with {self._replies.qsize()} replies not sent")
+                # unfinished_tasks counts the reply the sender holds, too
+                LOG.warning(f"stopping with {self._replies.unfinished_tasks} replies not sent")
         self._started = False
         self._connected.clear()
         self._sync_ok.clear()

@@ -103,14 +103,15 @@ class AccountMismatch(TokenRejected):
 def _retry_after_ms(header: Optional[str]) -> Optional[int]:
     """A ``Retry-After`` header in seconds, as milliseconds; ``None`` when unusable.
 
-    An HTTP date, ``inf``, ``nan`` or a negative number is unusable: a
-    negative wait makes ``time.sleep`` raise, and ``int(inf)`` raises too.
+    An HTTP date, ``inf``, ``nan``, a negative number, or one so large that
+    it overflows once in milliseconds (``1e306``) is unusable: a negative
+    wait makes ``time.sleep`` raise, and ``int(inf)`` raises too.
     """
     try:
         seconds = float(header) if header else None
     except ValueError:
         return None
-    if seconds is None or not math.isfinite(seconds) or seconds < 0:
+    if seconds is None or seconds < 0 or not math.isfinite(seconds * 1000):
         return None
     return int(seconds * 1000)
 

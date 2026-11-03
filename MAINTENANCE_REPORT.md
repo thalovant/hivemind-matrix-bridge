@@ -1,6 +1,21 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Adversarial review of the merged fork: eight fixes (hub outage leak and crash, crash-loop event, m.notice, reply sender, redirects, Retry-After, homeserver URL, question size).
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: eleven comments applied (Retry-After overflow, split keeps separators, mark within limit, shutdown count, stronger tests, docs).
 
 # Maintenance report: hivemind-matrix-bridge
+
+
+## 2026-11-03: CodeRabbit on pull request #2
+
+Eleven comments, all applied:
+
+- `PRRT_kwDOVg5Fws6zHTvf` (Major) `_retry_after_ms`: `Retry-After: 1e306` passed `isfinite(seconds)`, then `int(seconds * 1000)` raised `OverflowError` out of the sync loop; the converted value is checked now.
+- `PRRT_kwDOVg5Fws6zHTvU` `split_reply` kept nothing at a split it cut: the line break or space and the indentation after it were dropped. They now stay with their part; the parts joined are the reply.
+- `PRRT_kwDOVg5Fws6zHTvI` the cut mark is added only when it fits in `limit`.
+- `PRRT_kwDOVg5Fws6zHTvZ` the shutdown warning counts `unfinished_tasks` (the reply the sender holds included), not `qsize()`.
+- `PRRT_kwDOVg5Fws6zHTu2` FAQ and `docs/configuration.md` state the split rule (second-half break, else a cut at the byte limit); `docs/configuration.md` also says "tried up to 3 times (retried at most twice)".
+- `PRRT_kwDOVg5Fws6zHTvo` README and `docs/configuration.md`: replies ping nobody on Matrix spec v1.7 and later; older servers and clients, and the bot's power level, as in AUDIT section 15.
+- Tests made stricter: `PRRT_kwDOVg5Fws6zHTvv` (the malformed-relation test asserts `odd` is forwarded), `PRRT_kwDOVg5Fws6zHTwK` (SIGTERM through the real `start()`: hub closed, queued reply sent), `PRRT_kwDOVg5Fws6zHTwN` (the failed-forward warning itself), `PRRT_kwDOVg5Fws6zHTwW` (retry count and default waits for unusable `Retry-After`), `PRRT_kwDOVg5Fws6zHTwe` (the kept text is a prefix of distinct words).
+- **Verification:** the new and tightened tests were run before the code changes: 8 failed (overflow, splitting, tiny-limit mark, shutdown count); the SIGTERM test passed (the behaviour was right, now it is covered). After: `python -m pytest tests -q` 176 passed; ruff clean.
+- **Transparency report:** AI model Claude Opus 5.5 (`claude-opus-5-5`) in Claude Code; applied the automated review's eleven comments, code ones with tests; no human review yet.
 
 ## 2026-11-03: review of the merged fork
 

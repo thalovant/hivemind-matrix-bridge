@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: replies are m.notice from a sender thread and split when long, questions cut to 4096 characters, homeserver URL rules, SIGTERM.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: how a long reply is split, the mention limit on pre-1.7 servers, send tries.
 
 # Configuration
 
@@ -58,7 +58,7 @@ Never answered: notices (`m.notice`, what other bots send), edits (`m.replace`),
 
 A question longer than 4096 characters (`MAX_UTTERANCE_CHARS`) is cut to that before it goes to the hub.
 
-Replies are `m.notice` (what bots send, and what bots never answer, so two bots in one room cannot loop) with `m.mentions: {}` (they ping nobody), in the thread when the question was in one, and only to rooms the bridge answers in, whatever room the hub's context names. They are posted by one sender thread, in order, never on the hub's thread: at most 100 wait (`MAX_PENDING_REPLIES`), one more is dropped and logged. A reply over 16000 UTF-8 bytes (`MAX_BODY_BYTES`) is split at a line break or space into at most 4 messages; the rest is cut and ends with ` [...]`. Sends are paced 1 s apart; a rate-limited send is retried up to 3 times with the same transaction id.
+Replies are `m.notice` (what bots send, and what bots never answer, so two bots in one room cannot loop) with `m.mentions: {}` (on Matrix spec v1.7 and later they ping nobody; an older homeserver or client may still notify a member whose display name appears in a reply, or the room for `@room` when the bot's power level reaches the room's `notifications.room` value, 50 by default: keep the bot at power level 0), in the thread when the question was in one, and only to rooms the bridge answers in, whatever room the hub's context names. They are posted by one sender thread, in order, never on the hub's thread: at most 100 wait (`MAX_PENDING_REPLIES`), one more is dropped and logged. A reply over 16000 UTF-8 bytes (`MAX_BODY_BYTES`) is split into at most 4 messages: a part ends just after its last line break or space when that lies in its second half, otherwise it is cut at the byte limit (which can split a word, never a character); nothing is dropped at a split; the rest is cut and ends with ` [...]`. Sends are paced 1 s apart; a rate-limited send is tried up to 3 times (retried at most twice, `MAX_SEND_ATTEMPTS`) with the same transaction id.
 
 ## Exit and termination
 

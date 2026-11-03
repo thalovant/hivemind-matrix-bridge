@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: notices, long replies, upgraded rooms, DM invites with a list, homeserver URL.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: how a long reply is split.
 
 # FAQ: hivemind-matrix-bridge
 
@@ -56,7 +56,7 @@ This is the Thalovant fork. Upstream's release workflows were removed, so nothin
 
 ## What happens to a very long reply, or a very long question?
 
-A reply over 16000 UTF-8 bytes is split at a line break or space into at most 4 messages, the rest cut with ` [...]` (`split_reply`); a homeserver refuses an event over 64 KiB. A question is cut to 4096 characters before it goes to the hub (`MAX_UTTERANCE_CHARS`, Telegram's own limit).
+A reply over 16000 UTF-8 bytes is split into at most 4 messages: a part ends just after its last line break or space when that lies in its second half, otherwise it is cut at the byte limit (which can split a word, never a character); nothing is dropped at a split; the rest is cut with ` [...]` (`split_reply`); a homeserver refuses an event over 64 KiB. A question is cut to 4096 characters before it goes to the hub (`MAX_UTTERANCE_CHARS`, Telegram's own limit).
 
 ## A listed room was upgraded and the bot went quiet. Why?
 

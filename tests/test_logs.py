@@ -67,5 +67,6 @@ def test_a_failed_forward_neither_stops_the_bridge_nor_logs_the_question(monkeyp
     client.emit.side_effect = unreachable
     bridge.process_sync(joined(DM, text(ALICE, SECRET_QUESTION)))  # must not raise
     client.emit.assert_called_once()
-    assert lines, "the drop was not logged"
+    assert any("could not forward a message to HiveMind" in line for line in lines), \
+        "the drop was not logged"
     assert SECRET_QUESTION not in "\n".join(lines)

@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: test count, reply type and limits.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: split rule, test count.
 
 # Quick facts: hivemind-matrix-bridge
 
@@ -16,13 +16,13 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: test count, repl
 | Noise key path | `/home/bridge/.config/hivemind/unnamed-node_noise.key` (hex X25519 private key) |
 | Default branch | `main` (upstream: `JarbasHiveMind/HiveMind-matrix-bridge`, branch `dev`) |
 | CI | `.github/workflows/ci.yml`: tests on Python 3.12 and 3.14, ruff `F,E9`, image smoke tests (incl. read-only root and `token_rejected`), live run, publish on `main` |
-| Tests | `tests/`, 167 tests (`python -m pytest tests -q`); live run `tests/integration/live_matrix.py` (Conduit 0.10.9 + hivemind-core) |
+| Tests | `tests/`, 176 tests (`python -m pytest tests -q`); live run `tests/integration/live_matrix.py` (Conduit 0.10.9 + hivemind-core) |
 | HiveMind message types | sends `recognizer_loop:utterance`; handles `speak`, `hive.complete_intent_failure` |
 | Hub session id | `matrix-<room_id>-<user_id>` (`person`, default) or `matrix-<room_id>` (`chat`) |
 | Utterance context | `room_id`, `thread_id` (in a thread), `user.matrix_user_id`, `session.session_id` |
 | Termination | refused token: `token_rejected` in `/dev/termination-log`, exit status 3; hub refusal: exit status 1 |
 | Encryption | not supported: encrypted rooms are never answered, logged once |
-| Replies | `m.notice`, `m.mentions: {}`; one sender thread, at most 100 queued (`MAX_PENDING_REPLIES`); split above 16000 UTF-8 bytes (`MAX_BODY_BYTES`) into at most 4 messages (`MAX_REPLY_PARTS`) |
+| Replies | `m.notice`, `m.mentions: {}`; one sender thread, at most 100 queued (`MAX_PENDING_REPLIES`); split above 16000 UTF-8 bytes (`MAX_BODY_BYTES`) into at most 4 messages (`MAX_REPLY_PARTS`), after a line break or space in a part's second half, else at the byte limit; nothing dropped at a split |
 | Question size | cut to 4096 characters (`MAX_UTTERANCE_CHARS`) |
 | Redirects | not followed (`MatrixError(status, "REDIRECT")`) |
 | SIGTERM | stops through `stop()` (queued replies get 5 s), exit status 0 |

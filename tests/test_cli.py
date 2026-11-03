@@ -207,3 +207,41 @@ def test_plain_http_to_another_host_is_warned_about(monkeypatch, homeserver, war
     monkeypatch.setattr(cli.LOG, "warning", lambda message, *a, **k: lines.append(message))
     resolve_options([], {**BASE, "MATRIX_HOMESERVER": homeserver})
     assert any("http://" in line and "token" in line for line in lines) is warned
+
+
+
+def test_sigterm_during_the_sync_runs_stop_closes_the_hub_and_sends_queued_replies(monkeypatch):
+    """The real ``start()``: the handler's KeyboardInterrupt arrives in the sync
+    long-poll; ``start()``'s ``finally: stop()`` must close the hub session and
+    post what is queued before ``main`` returns."""
+    import threading
+    from unittest.mock import MagicMock
+
+    from ovos_bus_client.message import Message
+
+    import hm_matrix_bridge as bridge_module
+    import hm_matrix_bridge.__main__ as cli
+    from fakes import ROOM, FakeMatrix, joined
+
+    monkeypatch.setattr(cli.signal, "signal", lambda signum, handler: None)
+    hub = MagicMock()
+    hub.handshake_event = threading.Event()
+    hub.connect.side_effect = lambda **kwargs: hub.handshake_event.set()
+
+    class Interrupted(FakeMatrix):
+        def sync(self, since=None, timeout_ms=0, filter_json=None):
+            self.sync_calls.append(since)
+            if len(self.sync_calls) == 1:
+                return joined(ROOM, members=3)
+            # the hub answered just before the pod was told to stop
+            speak = next(call.args[1] for call in hub.on_mycroft.call_args_list
+                         if call.args[0] == "speak")
+            speak(Message("speak", {"utterance": "it is noon"}, {"room_id": ROOM}))
+            raise KeyboardInterrupt  # what _stop_on_sigterm raises in the main thread
+
+    matrix = Interrupted()
+    monkeypatch.setattr(bridge_module, "HiveMessageBusClient", lambda **kwargs: hub)
+    monkeypatch.setattr(bridge_module, "MatrixClient", lambda *args, **kwargs: matrix)
+    cli.main(["--homeserver", "https://matrix.example.org", "--access-token", "tok"])
+    hub.close.assert_called()
+    assert [content["body"] for _, content in matrix.sent] == ["it is noon"]

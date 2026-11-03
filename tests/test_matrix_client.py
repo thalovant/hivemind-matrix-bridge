@@ -180,6 +180,8 @@ def test_a_redirect_is_not_followed(hs):
     (429, {"errcode": "M_LIMIT_EXCEEDED"}, {"Retry-After": "-5"}),
     (429, {"errcode": "M_LIMIT_EXCEEDED", "retry_after_ms": -5000}, {}),
     (429, {"errcode": "M_LIMIT_EXCEEDED"}, {"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}),
+    # finite, but * 1000 overflows to inf, and int(inf) raises
+    (429, {"errcode": "M_LIMIT_EXCEEDED"}, {"Retry-After": "1e306"}),
 ])
 def test_an_odd_retry_after_never_raises_or_waits_a_negative_time(hs, answer):
     hs.route("PUT", r"/rooms/.+", answer)
@@ -187,5 +189,7 @@ def test_an_odd_retry_after_never_raises_or_waits_a_negative_time(hs, answer):
     with pytest.raises(MatrixError) as refused:
         client.send_message(ROOM, {"msgtype": "m.notice", "body": "hi"})
     assert refused.value.rate_limited
-    assert refused.value.retry_after_ms is None or refused.value.retry_after_ms >= 0
-    assert all(wait >= 0 for wait in waits)
+    # no usable wait: retried after the default, up to the attempt limit
+    assert len(hs.requests) == matrix_module.MAX_SEND_ATTEMPTS
+    assert waits == [matrix_module.DEFAULT_RATE_LIMIT_WAIT] * (matrix_module.MAX_SEND_ATTEMPTS - 1)
+    assert refused.value.retry_after_ms is None

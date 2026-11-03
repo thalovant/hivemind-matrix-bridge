@@ -96,7 +96,7 @@ def test_a_long_reply_is_split_into_messages_a_homeserver_accepts():
     bodies = [content["body"] for _, content in matrix.sent]
     assert 1 < len(bodies) <= MAX_REPLY_PARTS
     assert all(len(body.encode("utf-8")) <= MAX_BODY_BYTES for body in bodies)
-    assert " ".join(bodies) == words
+    assert "".join(bodies) == words
     assert all(content["msgtype"] == "m.notice" and content["m.mentions"] == {}
                for _, content in matrix.sent)
 
@@ -114,12 +114,44 @@ def test_splitting_never_breaks_a_character(text):
 
 
 def test_a_reply_beyond_the_parts_is_cut_and_marked():
-    text = "a " * (MAX_BODY_BYTES * MAX_REPLY_PARTS)
-    parts = split_reply(text)
+    words = " ".join(f"word{number}" for number in range(MAX_BODY_BYTES * MAX_REPLY_PARTS // 4))
+    parts = split_reply(words)
     assert len(parts) == MAX_REPLY_PARTS
     assert parts[-1].endswith(TRUNCATION_MARK)
     assert all(len(part.encode("utf-8")) <= MAX_BODY_BYTES for part in parts)
+    kept = "".join(parts)[:-len(TRUNCATION_MARK)]
+    assert len(kept) > 3 * MAX_BODY_BYTES
+    assert words.startswith(kept)
+
+
+def test_a_long_reply_keeps_line_breaks_and_indentation_at_split_points():
+    text = ("    " + "x" * 11 + "\n") * 1500  # ~24 kB; each split point is a line break
+    parts = split_reply(text)
+    assert 1 < len(parts) <= MAX_REPLY_PARTS
+    assert all(len(part.encode("utf-8")) <= MAX_BODY_BYTES for part in parts)
+    assert "".join(parts) == text
+
+
+@pytest.mark.parametrize("limit", [1, 3, 5, 6, 7])
+def test_the_cut_mark_never_takes_a_part_over_its_limit(limit):
+    parts = split_reply("abcdefgh" * 4, limit=limit, parts=1)
+    assert len(parts) == 1
+    assert len(parts[0].encode("utf-8")) <= limit
 
 
 def test_a_short_reply_is_one_message_unchanged():
     assert split_reply("It is noon.\n\nAnything else?") == ["It is noon.\n\nAnything else?"]
+
+
+def test_the_shutdown_warning_counts_the_reply_still_being_sent(monkeypatch):
+    """qsize() leaves out the reply the sender holds; it was not sent either."""
+    lines = []
+    monkeypatch.setattr(bridge_module, "STOP_DRAIN_SECONDS", 0.2)
+    monkeypatch.setattr(bridge_module.LOG, "warning", lambda message, *a, **k: lines.append(message))
+    matrix = HeldMatrix()
+    bridge, _, _ = make_bridge({ROOM: 3}, matrix=matrix)
+    hub_says(bridge, "held by the homeserver")
+    assert matrix.entered.wait(5)
+    bridge.stop()
+    matrix.release.set()
+    assert "stopping with 1 replies not sent" in lines

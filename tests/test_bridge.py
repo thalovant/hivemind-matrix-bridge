@@ -493,7 +493,7 @@ def test_a_malformed_relation_from_a_member_cannot_stop_the_bridge(relates):
     say(bridge, ROOM, text(ALICE, f"{BOT_NAME} odd", **{"m.relates_to": relates}))
     say(bridge, ROOM, text(ALICE, f"{BOT_NAME} still there?"))
     texts = [utterance for utterance, _ in utterances(client)]
-    assert texts[-1] == "still there?"
+    assert texts == ["odd", "still there?"]
     for _, context in utterances(client):
         assert isinstance(context.get("thread_id", ""), str)
 
