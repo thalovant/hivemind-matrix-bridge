@@ -9,7 +9,8 @@ client-server API client in :mod:`hm_matrix_bridge.matrix`.
 What it answers, in order of the checks in :meth:`HiveMindMatrixBridge.handle_message`:
 
 - only ``m.text`` messages from someone other than the bot; edits, notices
-  (other bots) and messages from before the bot joined are not;
+  (what bots send, this one's replies included) and messages from before the
+  bot joined are not;
 - never in an end-to-end encrypted room: the bridge has no device keys, so it
   logs the room once and stays silent there;
 - a room on the allow-list is always answered; with no allow-list every room
@@ -734,9 +735,14 @@ class HiveMindMatrixBridge:
         if state is None or state.encrypted or not self.answer_policy(room_id)[0]:
             LOG.warning(f"not replying in room {room_id}: not a room the bridge answers in")
             return
-        content: Dict[str, Any] = {"msgtype": "m.text", "body": text,
-                                   # mentions nobody: a reply never pings anyone
-                                   "m.mentions": {}}
+        content: Dict[str, Any] = {
+            # m.notice is what automated clients send, and what they never
+            # answer (spec: m.notice): two bots in one room cannot loop.
+            "msgtype": "m.notice",
+            "body": text,
+            # mentions nobody: a reply never pings anyone
+            "m.mentions": {},
+        }
         if thread_id:
             content["m.relates_to"] = {"rel_type": "m.thread", "event_id": thread_id,
                                        "is_falling_back": True,

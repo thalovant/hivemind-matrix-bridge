@@ -340,7 +340,7 @@ def test_a_reply_goes_back_to_the_room_and_mentions_nobody():
     speak(bridge, "It is noon", ROOM)
     [(room_id, content)] = matrix.sent
     assert room_id == ROOM
-    assert content == {"msgtype": "m.text", "body": "It is noon", "m.mentions": {}}
+    assert content == {"msgtype": "m.notice", "body": "It is noon", "m.mentions": {}}
 
 
 def test_the_bot_remembers_its_replies_as_its_own():
@@ -524,3 +524,15 @@ def test_an_odd_sync_answer_is_ignored_not_fatal(answer):
     bridge, _, _ = make_bridge({ROOM: 3})
     bridge.process_sync(answer)
     assert ROOM in bridge.rooms
+
+
+def test_two_bridges_in_one_room_do_not_answer_each_other():
+    """Replies are ``m.notice``, which bots (this one included) never answer."""
+    first, first_matrix, _ = make_bridge({DM: 2})
+    second, _, second_hub = make_bridge({DM: 2}, matrix=FakeMatrix(user_id="@hive2:example.org",
+                                                                   display_name="HiveBot2"))
+    speak(first, "HiveBot2: what time is it?", DM)
+    [(_, content)] = first_matrix.sent
+    reply = {"type": "m.room.message", "sender": BOT, "event_id": "$r1", "content": content}
+    second.process_sync(joined(DM, reply))
+    second_hub.emit.assert_not_called()
