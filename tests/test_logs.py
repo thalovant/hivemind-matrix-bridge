@@ -50,3 +50,20 @@ def test_the_access_token_is_not_in_the_client_repr_or_its_errors():
     client = MatrixClient("https://matrix.example.org", TOKEN)
     assert TOKEN not in repr(client)
     assert TOKEN not in str(MatrixError(401, "M_UNKNOWN_TOKEN"))
+
+
+def test_a_failed_forward_neither_stops_the_bridge_nor_logs_the_question(monkeypatch):
+    """hivemind-bus-client raises ``RuntimeError(f"... {message.serialize()}")``
+    while the hub is unreachable: the whole utterance is in the error's text."""
+    lines = capture(monkeypatch)
+    bridge, _, client = make_bridge({DM: 2})
+
+    def unreachable(hive_message):
+        raise RuntimeError("Can not send messages before opening the websocket "
+                           f"connection. Failed to emit : {hive_message.payload.serialize()}")
+
+    client.emit.side_effect = unreachable
+    bridge.process_sync(joined(DM, text(ALICE, SECRET_QUESTION)))  # must not raise
+    client.emit.assert_called_once()
+    assert lines, "the drop was not logged"
+    assert SECRET_QUESTION not in "\n".join(lines)

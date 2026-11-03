@@ -455,3 +455,13 @@ def test_the_backoff_follows_the_rate_limit_and_is_capped():
     assert backoff(MatrixError(429, "M_LIMIT_EXCEEDED", 10 ** 9), 1) == bridge_module.MAX_SYNC_BACKOFF
     assert backoff(MatrixError(502), 1) == 2.0
     assert backoff(MatrixError(502), 50) == bridge_module.MAX_SYNC_BACKOFF
+
+
+def test_a_message_while_the_hub_reconnects_is_dropped_not_emitted():
+    bridge, _, client = make_bridge({DM: 2})
+    client.handshake_event.clear()  # the hub connection dropped; the client is reconnecting
+    say(bridge, DM, text(ALICE, "hello"))
+    client.emit.assert_not_called()
+    client.handshake_event.set()
+    say(bridge, DM, text(ALICE, "hello again"))
+    assert [utterance for utterance, _ in utterances(client)] == ["hello again"]

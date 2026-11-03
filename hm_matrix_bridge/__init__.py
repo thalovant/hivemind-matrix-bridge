@@ -403,9 +403,16 @@ class HiveMindMatrixBridge:
         event when the connection drops), the initial sync must be done and
         the last sync must have succeeded.
         """
+        return bool(self.hub_live() and self._synced.is_set() and self._sync_ok.is_set())
+
+    def hub_live(self) -> bool:
+        """Whether the HiveMind session is up right now, not only once established.
+
+        The client clears its ``handshake_event`` when the connection drops
+        and sets it again once the reconnect worker has a new session.
+        """
         handshake = getattr(self.client, "handshake_event", None)
-        hub_up = self._connected.is_set() and (handshake is None or handshake.is_set())
-        return bool(hub_up and self._synced.is_set() and self._sync_ok.is_set())
+        return self._connected.is_set() and (handshake is None or handshake.is_set())
 
     # ------------------------------------------------------------------
     # sync processing
@@ -526,8 +533,8 @@ class HiveMindMatrixBridge:
         if text is None:
             return
 
-        if not self._connected.is_set():
-            LOG.warning("dropping a Matrix message, not connected to HiveMind yet")
+        if not self.hub_live():
+            LOG.warning("dropping a Matrix message, the HiveMind session is not up")
             return
 
         thread_id = relates.get("event_id") if relates.get("rel_type") == "m.thread" else None
@@ -667,7 +674,14 @@ class HiveMindMatrixBridge:
         msg = Message("recognizer_loop:utterance",
                       {"utterances": [text], "lang": self.lang},
                       context)
-        self.client.emit(HiveMessage(HiveMessageType.BUS, msg))
+        try:
+            self.client.emit(HiveMessage(HiveMessageType.BUS, msg))
+        except Exception as error:
+            # While the hub is unreachable hivemind-bus-client raises a
+            # RuntimeError whose text is the whole serialized message, the
+            # question included: log the type only, and keep syncing.
+            LOG.warning(f"could not forward a message to HiveMind "
+                        f"({type(error).__name__}); dropped")
 
     def session_id(self, room_id: str, sender: Optional[str]) -> str:
         """The hub session a message from ``sender`` in ``room_id`` belongs to."""
