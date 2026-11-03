@@ -14,8 +14,11 @@ When the homeserver refuses the access token, the bridge writes
 message) and exits with status 3: retrying cannot fix a bad token.
 """
 import argparse
+import ipaddress
 import os
 import re
+import signal
+import threading
 from typing import List, Mapping, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -60,6 +63,16 @@ _SERVER_NAME = r"(?:[A-Za-z0-9.\-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?"
 #: ``!opaque:server`` (room versions 1-11) or ``!opaque`` (room version 12).
 _ROOM_ID = re.compile(rf"![^\s,:]+(?::{_SERVER_NAME})?")
 _USER_ID = re.compile(rf"@[^\s:]+:{_SERVER_NAME}")
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether ``host`` names this machine (``localhost`` or a loopback address)."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -188,9 +201,18 @@ def resolve_options(argv: Optional[Sequence[str]] = None,
         parser.error("a homeserver is required: --homeserver or MATRIX_HOMESERVER "
                      "(the client API URL, e.g. https://matrix.example.org)")
     parsed = urlparse(homeserver.strip())
-    if parsed.scheme not in ("https", "http") or not parsed.netloc:
+    if parsed.scheme not in ("https", "http") or not parsed.hostname:
         parser.error("MATRIX_HOMESERVER must be an https:// URL, e.g. "
                      "https://matrix.example.org")
+    if parsed.username is not None or parsed.password is not None:
+        # requests would turn them into Basic auth, replacing the token's header
+        parser.error("MATRIX_HOMESERVER must not hold a user name or password")
+    if parsed.query or parsed.fragment or homeserver.strip().endswith(("?", "#")):
+        parser.error("MATRIX_HOMESERVER must not have a query or fragment "
+                     "(the API paths are appended to it)")
+    if parsed.scheme == "http" and not _is_loopback(parsed.hostname):
+        LOG.warning("MATRIX_HOMESERVER is plain http:// to another host: the access "
+                    "token and every message cross the network unencrypted")
     homeserver = homeserver.strip().rstrip("/")
 
     access_token = pick("access_token")
@@ -278,8 +300,20 @@ def connect_matrix_to_hivemind(**options) -> HiveMindMatrixBridge:
     return bridge
 
 
+def _stop_on_sigterm(signum, frame) -> None:
+    """Leave on SIGTERM the way Ctrl-C does: through ``start()``'s ``stop()``.
+
+    Kubernetes stops a pod with SIGTERM, and Python's default action ends
+    the process at once: replies already queued would be lost and the hub
+    session dropped without a close.
+    """
+    raise KeyboardInterrupt
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     options = resolve_options(argv)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _stop_on_sigterm)
     LOG.info("bridge starting; press Ctrl-C to stop")
     try:
         connect_matrix_to_hivemind(**options)

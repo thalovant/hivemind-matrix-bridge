@@ -1,6 +1,49 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: managed multi-room Matrix bridge, image, CI, live test, docs set.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: eleven comments applied (Retry-After overflow, split keeps separators, mark within limit, shutdown count, stronger tests, docs).
 
 # Maintenance report: hivemind-matrix-bridge
+
+
+## 2026-11-03: CodeRabbit on pull request #2
+
+Eleven comments, all applied:
+
+- `PRRT_kwDOVg5Fws6zHTvf` (Major) `_retry_after_ms`: `Retry-After: 1e306` passed `isfinite(seconds)`, then `int(seconds * 1000)` raised `OverflowError` out of the sync loop; the converted value is checked now.
+- `PRRT_kwDOVg5Fws6zHTvU` `split_reply` kept nothing at a split it cut: the line break or space and the indentation after it were dropped. They now stay with their part; the parts joined are the reply.
+- `PRRT_kwDOVg5Fws6zHTvI` the cut mark is added only when it fits in `limit`.
+- `PRRT_kwDOVg5Fws6zHTvZ` the shutdown warning counts `unfinished_tasks` (the reply the sender holds included), not `qsize()`.
+- `PRRT_kwDOVg5Fws6zHTu2` FAQ and `docs/configuration.md` state the split rule (second-half break, else a cut at the byte limit); `docs/configuration.md` also says "tried up to 3 times (retried at most twice)".
+- `PRRT_kwDOVg5Fws6zHTvo` README and `docs/configuration.md`: replies ping nobody on Matrix spec v1.7 and later; older servers and clients, and the bot's power level, as in AUDIT section 15.
+- Tests made stricter: `PRRT_kwDOVg5Fws6zHTvv` (the malformed-relation test asserts `odd` is forwarded), `PRRT_kwDOVg5Fws6zHTwK` (SIGTERM through the real `start()`: hub closed, queued reply sent), `PRRT_kwDOVg5Fws6zHTwN` (the failed-forward warning itself), `PRRT_kwDOVg5Fws6zHTwW` (retry count and default waits for unusable `Retry-After`), `PRRT_kwDOVg5Fws6zHTwe` (the kept text is a prefix of distinct words).
+- **Verification:** the new and tightened tests were run before the code changes: 8 failed (overflow, splitting, tiny-limit mark, shutdown count); the SIGTERM test passed (the behaviour was right, now it is covered). After: `python -m pytest tests -q` 176 passed; ruff clean.
+- **Transparency report:** AI model Claude Opus 5.5 (`claude-opus-5-5`) in Claude Code; applied the automated review's eleven comments, code ones with tests; no human review yet.
+
+## 2026-11-03: review of the merged fork
+
+**Why:** PR #1 was merged without an automated review. An adversarial read of `main` at `35bb1aea` (security first, then stability, then the contract) found eight problems; AUDIT.md has each one with its lines and test (R1-R8) and the open items (sections 14-20).
+
+**Changes** (branch `fix/review-2026-11-03`, one commit each, oldest first)
+
+1. A hub outage no longer stops the bridge or logs the question: `handle_message` checks the live session (`hub_live`), `forward_to_hivemind` catches what `HiveMessageBusClient.emit` raises (its `RuntimeError` text is the whole serialized message) and logs the type only.
+2. One malformed event can no longer crash-loop the bridge: event ids from `m.relates_to` are used only when they are strings, each message goes through `_handle_one`, and odd sync sections are ignored.
+3. Replies are `m.notice`, so two bots in a room cannot answer each other.
+4. Replies are posted by one sender thread (`speak` queues, `deliver` posts; at most 100 waiting), long replies are split into messages of at most 16000 UTF-8 bytes (4 at most, then cut), `stop` drains for 5 s, and SIGTERM goes through `stop`.
+5. `MatrixClient` follows no redirects (a 3xx is `MatrixError(..., "REDIRECT")`), unusable `Retry-After` values are ignored, and the homeserver URL may not carry credentials, a query or a fragment; plain `http://` to a non-loopback host is warned about.
+6. A forwarded question is cut to 4096 characters.
+7. Docs: AUDIT (review table, section 5 closed, sections 14-20), this entry, `docs/configuration.md`, `docs/index.md`, README, QUICK_FACTS, FAQ, SUGGESTIONS.
+
+**Verification**
+
+- Each new test was run before its fix and failed (for the URL checks: the CLI tests against the old `__main__.py`, 5 failed).
+- `python -m pytest tests -q`: 167 passed (Python 3.12, local; 125 before).
+- `ruff check --isolated --select F,E9 .`: clean.
+- SIGTERM on a real process (the bridge retrying an unreachable homeserver): `shutting down`, exit status 0.
+- Not run locally: the image smoke steps and `tests/integration/live_matrix.py` (CI runs both on the pull request). The live test reads the bot's replies by sender, so `m.notice` does not change what it checks.
+
+**Transparency report**
+
+- **AI model:** Claude Opus 5.5 (`claude-opus-5-5`), in Claude Code.
+- **Actions taken:** reviewed the bridge, the Matrix client, the CLI, the image and CI against the bridge contract and the Telegram fork; checked hivemind-bus-client 1.2.12a1's `emit` and handler dispatch; wrote the failing tests, the fixes and these documents.
+- **Oversight:** requested by the repository owner through the session lead as an independent review; the pull request is left for a human to review and merge.
 
 ## 2026-11-02: Thalovant fork
 

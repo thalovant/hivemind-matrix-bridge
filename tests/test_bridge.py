@@ -8,13 +8,14 @@ import threading
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from ovos_bus_client.message import Message
 
 import hm_matrix_bridge as bridge_module
 from fakes import (ALICE, BOB, BOT, BOT_NAME, DM, OTHER, ROOM, FakeMatrix, encryption,
                    invited, joined, make_bridge, member, text, utterances)
 from hm_matrix_bridge import HiveMindMatrixBridge
-from hm_matrix_bridge.matrix import AccountMismatch, MatrixError, TokenRejected
+from hm_matrix_bridge.matrix import AccountMismatch, MatrixClient, MatrixError, TokenRejected
 
 
 def say(bridge, room_id, event, members=None):
@@ -332,6 +333,7 @@ def test_an_encrypted_event_marks_the_room_encrypted():
 # ----------------------------------------------------------------------
 def speak(bridge, utterance, room_id, **context):
     bridge.handle_speak(Message("speak", {"utterance": utterance}, {"room_id": room_id, **context}))
+    assert bridge.wait_for_replies(5)
 
 
 def test_a_reply_goes_back_to_the_room_and_mentions_nobody():
@@ -339,7 +341,7 @@ def test_a_reply_goes_back_to_the_room_and_mentions_nobody():
     speak(bridge, "It is noon", ROOM)
     [(room_id, content)] = matrix.sent
     assert room_id == ROOM
-    assert content == {"msgtype": "m.text", "body": "It is noon", "m.mentions": {}}
+    assert content == {"msgtype": "m.notice", "body": "It is noon", "m.mentions": {}}
 
 
 def test_the_bot_remembers_its_replies_as_its_own():
@@ -373,6 +375,7 @@ def test_a_question_in_a_thread_is_answered_in_the_thread():
 def test_a_complete_intent_failure_gets_the_fallback_line():
     bridge, matrix, _ = make_bridge({ROOM: 3})
     bridge.handle_intent_failure(Message("hive.complete_intent_failure", {}, {"room_id": ROOM}))
+    assert bridge.wait_for_replies(5)
     assert matrix.sent[0][1]["body"] == "I don't know how to answer that"
 
 
@@ -380,6 +383,9 @@ def test_speak_without_a_room_or_text_sends_nothing():
     bridge, matrix, _ = make_bridge({ROOM: 3})
     bridge.handle_speak(Message("speak", {"utterance": "x"}, {}))
     bridge.handle_speak(Message("speak", {"utterance": ""}, {"room_id": ROOM}))
+    bridge.handle_speak(Message("speak", {"utterance": "x"}, {"room_id": ["!a:example.org"]}))
+    bridge.handle_speak(Message("speak", {"utterance": {"x": 1}}, {"room_id": ROOM}))
+    assert bridge.wait_for_replies(5)
     assert matrix.sent == []
 
 
@@ -455,3 +461,83 @@ def test_the_backoff_follows_the_rate_limit_and_is_capped():
     assert backoff(MatrixError(429, "M_LIMIT_EXCEEDED", 10 ** 9), 1) == bridge_module.MAX_SYNC_BACKOFF
     assert backoff(MatrixError(502), 1) == 2.0
     assert backoff(MatrixError(502), 50) == bridge_module.MAX_SYNC_BACKOFF
+
+
+def test_a_message_while_the_hub_reconnects_is_dropped_not_emitted():
+    bridge, _, client = make_bridge({DM: 2})
+    client.handshake_event.clear()  # the hub connection dropped; the client is reconnecting
+    say(bridge, DM, text(ALICE, "hello"))
+    client.emit.assert_not_called()
+    client.handshake_event.set()
+    say(bridge, DM, text(ALICE, "hello again"))
+    assert [utterance for utterance, _ in utterances(client)] == ["hello again"]
+
+
+@pytest.mark.parametrize("relates", [
+    {"m.in_reply_to": "$not-an-object"},
+    {"m.in_reply_to": ["$a", "$b"]},
+    {"m.in_reply_to": {"event_id": 5}},
+    {"m.in_reply_to": {"event_id": {"$": 1}}},
+    {"rel_type": "m.thread", "event_id": {"$": 1}},
+    {"rel_type": "m.thread", "event_id": ["$root"]},
+])
+def test_a_malformed_relation_from_a_member_cannot_stop_the_bridge(relates):
+    """Any member can put any JSON in ``content``: the homeserver does not check it."""
+    bridge, matrix, client = make_bridge({ROOM: 3})
+    offline = MagicMock()
+    offline.request.side_effect = requests.ConnectionError()
+    # the real client's path building (id quoting), never a real request
+    matrix.event = MatrixClient("https://matrix.example.org", "t",
+                                session_factory=lambda: offline).event
+    say(bridge, ROOM, text(ALICE, "odd, no mention", **{"m.relates_to": relates}))
+    say(bridge, ROOM, text(ALICE, f"{BOT_NAME} odd", **{"m.relates_to": relates}))
+    say(bridge, ROOM, text(ALICE, f"{BOT_NAME} still there?"))
+    texts = [utterance for utterance, _ in utterances(client)]
+    assert texts == ["odd", "still there?"]
+    for _, context in utterances(client):
+        assert isinstance(context.get("thread_id", ""), str)
+
+
+def test_one_event_that_cannot_be_handled_does_not_stop_the_others(monkeypatch):
+    bridge, _, client = make_bridge({ROOM: 3})
+    original = bridge.addressed_text
+
+    def flaky(room_id, content, is_dm):
+        if content.get("body", "").endswith("boom"):
+            raise KeyError("x")
+        return original(room_id, content, is_dm)
+
+    monkeypatch.setattr(bridge, "addressed_text", flaky)
+    bridge.process_sync(joined(ROOM, text(ALICE, f"{BOT_NAME} boom"), text(ALICE, f"{BOT_NAME} fine")))
+    assert [utterance for utterance, _ in utterances(client)] == ["fine"]
+
+
+def test_a_refused_token_while_handling_a_message_is_not_swallowed():
+    bridge, matrix, _ = make_bridge({ROOM: 3})
+    matrix.event = MagicMock(side_effect=TokenRejected(401, "M_UNKNOWN_TOKEN"))
+    with pytest.raises(TokenRejected):
+        say(bridge, ROOM, text(ALICE, "re: that", **{"m.relates_to": {"m.in_reply_to": {"event_id": "$x"}}}))
+
+
+@pytest.mark.parametrize("answer", [
+    {"rooms": {"join": ["!a:example.org"]}},
+    {"rooms": {"join": {ROOM: {"timeline": {"events": 5}}}}},
+    {"rooms": {"leave": 5, "invite": "x"}},
+    {"rooms": []},
+])
+def test_an_odd_sync_answer_is_ignored_not_fatal(answer):
+    bridge, _, _ = make_bridge({ROOM: 3})
+    bridge.process_sync(answer)
+    assert ROOM in bridge.rooms
+
+
+def test_two_bridges_in_one_room_do_not_answer_each_other():
+    """Replies are ``m.notice``, which bots (this one included) never answer."""
+    first, first_matrix, _ = make_bridge({DM: 2})
+    second, _, second_hub = make_bridge({DM: 2}, matrix=FakeMatrix(user_id="@hive2:example.org",
+                                                                   display_name="HiveBot2"))
+    speak(first, "HiveBot2: what time is it?", DM)
+    [(_, content)] = first_matrix.sent
+    reply = {"type": "m.room.message", "sender": BOT, "event_id": "$r1", "content": content}
+    second.process_sync(joined(DM, reply))
+    second_hub.emit.assert_not_called()

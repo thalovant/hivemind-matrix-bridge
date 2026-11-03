@@ -113,7 +113,13 @@ def test_the_homeserver_and_the_token_are_required(capsys):
     assert "MATRIX_ACCESS_TOKEN" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("homeserver", ["matrix.example.org", "ftp://matrix.example.org", "https://"])
+@pytest.mark.parametrize("homeserver", [
+    "matrix.example.org", "ftp://matrix.example.org", "https://",
+    # credentials in the URL replace the token's Authorization header
+    "https://bot:secret@matrix.example.org",
+    # a query or fragment would swallow every API path appended after it
+    "https://matrix.example.org/?x=1", "https://matrix.example.org/#top",
+])
 def test_the_homeserver_must_be_a_url(homeserver):
     with pytest.raises(SystemExit):
         resolve_options([], {**BASE, "MATRIX_HOMESERVER": homeserver})
@@ -162,3 +168,80 @@ def test_mention_gating_is_on_by_default_and_can_be_turned_off():
     assert resolve_options([], {**BASE, "MATRIX_REQUIRE_MENTION": "false"})["require_mention"] is False
     assert resolve_options([], {**BASE, "MATRIX_REQUIRE_MENTION": "true"})["require_mention"] is True
 
+
+
+def test_sigterm_stops_the_bridge_the_way_ctrl_c_does(monkeypatch):
+    """Kubernetes stops a pod with SIGTERM; Python's default ends it without
+    ``stop()``, so queued replies and the hub session would just vanish."""
+    import signal
+
+    import hm_matrix_bridge.__main__ as cli
+
+    installed = {}
+    monkeypatch.setattr(cli.signal, "signal", lambda signum, handler: installed.update({signum: handler}))
+    stopped = []
+
+    def run(**options):
+        stopped.append("ran")
+        raise KeyboardInterrupt  # what the handler raises in the main thread
+
+    monkeypatch.setattr(cli, "connect_matrix_to_hivemind", run)
+    cli.main(["--homeserver", "https://matrix.example.org", "--access-token", "tok"])
+    assert stopped == ["ran"]
+    with pytest.raises(KeyboardInterrupt):
+        installed[signal.SIGTERM](signal.SIGTERM, None)
+
+
+@pytest.mark.parametrize("homeserver, warned", [
+    ("http://matrix.example.org", True),
+    ("http://10.0.0.5:8008", True),
+    ("http://127.0.0.1:8008", False),
+    ("http://localhost:8008", False),
+    ("http://[::1]:8008", False),
+    ("https://matrix.example.org", False),
+])
+def test_plain_http_to_another_host_is_warned_about(monkeypatch, homeserver, warned):
+    import hm_matrix_bridge.__main__ as cli
+
+    lines = []
+    monkeypatch.setattr(cli.LOG, "warning", lambda message, *a, **k: lines.append(message))
+    resolve_options([], {**BASE, "MATRIX_HOMESERVER": homeserver})
+    assert any("http://" in line and "token" in line for line in lines) is warned
+
+
+
+def test_sigterm_during_the_sync_runs_stop_closes_the_hub_and_sends_queued_replies(monkeypatch):
+    """The real ``start()``: the handler's KeyboardInterrupt arrives in the sync
+    long-poll; ``start()``'s ``finally: stop()`` must close the hub session and
+    post what is queued before ``main`` returns."""
+    import threading
+    from unittest.mock import MagicMock
+
+    from ovos_bus_client.message import Message
+
+    import hm_matrix_bridge as bridge_module
+    import hm_matrix_bridge.__main__ as cli
+    from fakes import ROOM, FakeMatrix, joined
+
+    monkeypatch.setattr(cli.signal, "signal", lambda signum, handler: None)
+    hub = MagicMock()
+    hub.handshake_event = threading.Event()
+    hub.connect.side_effect = lambda **kwargs: hub.handshake_event.set()
+
+    class Interrupted(FakeMatrix):
+        def sync(self, since=None, timeout_ms=0, filter_json=None):
+            self.sync_calls.append(since)
+            if len(self.sync_calls) == 1:
+                return joined(ROOM, members=3)
+            # the hub answered just before the pod was told to stop
+            speak = next(call.args[1] for call in hub.on_mycroft.call_args_list
+                         if call.args[0] == "speak")
+            speak(Message("speak", {"utterance": "it is noon"}, {"room_id": ROOM}))
+            raise KeyboardInterrupt  # what _stop_on_sigterm raises in the main thread
+
+    matrix = Interrupted()
+    monkeypatch.setattr(bridge_module, "HiveMessageBusClient", lambda **kwargs: hub)
+    monkeypatch.setattr(bridge_module, "MatrixClient", lambda *args, **kwargs: matrix)
+    cli.main(["--homeserver", "https://matrix.example.org", "--access-token", "tok"])
+    hub.close.assert_called()
+    assert [content["body"] for _, content in matrix.sent] == ["it is noon"]
