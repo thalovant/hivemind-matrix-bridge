@@ -51,6 +51,11 @@ MAX_SEND_ATTEMPTS = 3
 #: asks for longer gets the message dropped instead of a stalled bridge.
 MAX_RATE_LIMIT_WAIT = 30.0
 
+#: Largest ``retry_after_ms`` kept from an answer (about 31 years). A JSON
+#: integer can have hundreds of digits, and ``retry_after_ms / 1000.0`` then
+#: raises OverflowError; every wait is capped far below this anyway.
+MAX_RETRY_AFTER_MS = 10 ** 12
+
 #: Wait used when a 429 names no ``retry_after_ms``.
 DEFAULT_RATE_LIMIT_WAIT = 1.0
 
@@ -218,6 +223,8 @@ class MatrixClient:
                 or retry_after_ms < 0):
             header = response.headers.get("Retry-After") if response.headers else None
             retry_after_ms = _retry_after_ms(header)
+        if retry_after_ms is not None:
+            retry_after_ms = min(retry_after_ms, MAX_RETRY_AFTER_MS)
         if response.status_code == 401 or errcode in REJECTED_TOKEN_ERRCODES:
             return TokenRejected(response.status_code, errcode, retry_after_ms)
         return MatrixError(response.status_code, errcode, retry_after_ms)

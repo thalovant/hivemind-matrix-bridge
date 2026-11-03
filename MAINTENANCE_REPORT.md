@@ -1,7 +1,16 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: eleven comments applied (Retry-After overflow, split keeps separators, mark within limit, shutdown count, stronger tests, docs).
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit review-body follow-up after PR #2: clamp retry_after_ms from the answer body.
 
 # Maintenance report: hivemind-matrix-bridge
 
+
+
+## 2026-11-03: CodeRabbit review-body follow-up (after pull request #2)
+
+PR #2 was merged before this comment, which sat in a review body ("Follow-up Comments") rather than a thread, was seen.
+
+- **398556d4 `hm_matrix_bridge/matrix.py` L216-219, clamp `retry_after_ms`:** a 429 answer body whose `retry_after_ms` has hundreds of digits decodes as a Python int; `_backoff` (`retry_after_ms / 1000.0`) then raised `OverflowError` out of the sync loop and the bridge exited (reproduced: "int too large to convert to float"). `MatrixClient._error` clamps the value, from the body or the header, to `MAX_RETRY_AFTER_MS = 10 ** 12`. Test: `tests/test_matrix_client.py::test_a_huge_retry_after_ms_in_the_body_is_clamped_not_fatal` (sync and send paths).
+- **Verification:** `python -m pytest tests -q`: 178 passed; ruff clean.
+- **Transparency report:** AI model Claude Opus 5.5 (`claude-opus-5-5`) in Claude Code; applied the automated review-body comment with a test; no human review yet.
 
 ## 2026-11-03: CodeRabbit on pull request #2
 
