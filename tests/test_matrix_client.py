@@ -153,3 +153,39 @@ def test_an_answer_that_is_not_an_object_reads_as_empty(hs):
     hs.route("GET", "/account/whoami", lambda request: (200, "not an object", {}))
     client, _ = client_for(hs)
     assert client.whoami() == {}
+
+
+def test_a_redirect_is_not_followed(hs):
+    """The homeserver URL is whatever the customer typed; a redirect could
+    point the bridge's requests (a reply's text in a PUT body) anywhere."""
+    with Homeserver() as elsewhere:
+        elsewhere.route("GET", "/account/whoami", (200, {"user_id": "@hive:example.org"}))
+        elsewhere.route("PUT", r"/rooms/.+", (200, {"event_id": "$x"}))
+        target = f"{elsewhere.url}/_matrix/client/v3"
+        hs.route("GET", "/account/whoami", (302, {}, {"Location": f"{target}/account/whoami"}))
+        hs.route("PUT", r"/rooms/.+", (307, {}, {"Location": f"{target}/rooms/x"}))
+        client, _ = client_for(hs)
+        with pytest.raises(MatrixError) as refused:
+            client.whoami()
+        assert (refused.value.status, refused.value.errcode) == (302, "REDIRECT")
+        assert not isinstance(refused.value, TokenRejected)
+        with pytest.raises(MatrixError):
+            client.send_message(ROOM, {"msgtype": "m.notice", "body": "private answer"})
+        assert elsewhere.requests == []
+
+
+@pytest.mark.parametrize("answer", [
+    (429, {"errcode": "M_LIMIT_EXCEEDED"}, {"Retry-After": "inf"}),
+    (429, {"errcode": "M_LIMIT_EXCEEDED"}, {"Retry-After": "nan"}),
+    (429, {"errcode": "M_LIMIT_EXCEEDED"}, {"Retry-After": "-5"}),
+    (429, {"errcode": "M_LIMIT_EXCEEDED", "retry_after_ms": -5000}, {}),
+    (429, {"errcode": "M_LIMIT_EXCEEDED"}, {"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}),
+])
+def test_an_odd_retry_after_never_raises_or_waits_a_negative_time(hs, answer):
+    hs.route("PUT", r"/rooms/.+", answer)
+    client, waits = client_for(hs)
+    with pytest.raises(MatrixError) as refused:
+        client.send_message(ROOM, {"msgtype": "m.notice", "body": "hi"})
+    assert refused.value.rate_limited
+    assert refused.value.retry_after_ms is None or refused.value.retry_after_ms >= 0
+    assert all(wait >= 0 for wait in waits)

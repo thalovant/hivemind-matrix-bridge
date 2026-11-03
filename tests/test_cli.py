@@ -113,7 +113,13 @@ def test_the_homeserver_and_the_token_are_required(capsys):
     assert "MATRIX_ACCESS_TOKEN" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("homeserver", ["matrix.example.org", "ftp://matrix.example.org", "https://"])
+@pytest.mark.parametrize("homeserver", [
+    "matrix.example.org", "ftp://matrix.example.org", "https://",
+    # credentials in the URL replace the token's Authorization header
+    "https://bot:secret@matrix.example.org",
+    # a query or fragment would swallow every API path appended after it
+    "https://matrix.example.org/?x=1", "https://matrix.example.org/#top",
+])
 def test_the_homeserver_must_be_a_url(homeserver):
     with pytest.raises(SystemExit):
         resolve_options([], {**BASE, "MATRIX_HOMESERVER": homeserver})
@@ -184,3 +190,20 @@ def test_sigterm_stops_the_bridge_the_way_ctrl_c_does(monkeypatch):
     assert stopped == ["ran"]
     with pytest.raises(KeyboardInterrupt):
         installed[signal.SIGTERM](signal.SIGTERM, None)
+
+
+@pytest.mark.parametrize("homeserver, warned", [
+    ("http://matrix.example.org", True),
+    ("http://10.0.0.5:8008", True),
+    ("http://127.0.0.1:8008", False),
+    ("http://localhost:8008", False),
+    ("http://[::1]:8008", False),
+    ("https://matrix.example.org", False),
+])
+def test_plain_http_to_another_host_is_warned_about(monkeypatch, homeserver, warned):
+    import hm_matrix_bridge.__main__ as cli
+
+    lines = []
+    monkeypatch.setattr(cli.LOG, "warning", lambda message, *a, **k: lines.append(message))
+    resolve_options([], {**BASE, "MATRIX_HOMESERVER": homeserver})
+    assert any("http://" in line and "token" in line for line in lines) is warned

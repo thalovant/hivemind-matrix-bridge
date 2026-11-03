@@ -15,6 +15,7 @@ End-to-end encryption is not implemented: it needs a persistent device key
 store per bot. :class:`hm_matrix_bridge.HiveMindMatrixBridge` refuses to
 answer in an encrypted room instead.
 """
+import math
 import threading
 import time
 import uuid
@@ -99,6 +100,21 @@ class AccountMismatch(TokenRejected):
                 f"not {self.expected}")
 
 
+def _retry_after_ms(header: Optional[str]) -> Optional[int]:
+    """A ``Retry-After`` header in seconds, as milliseconds; ``None`` when unusable.
+
+    An HTTP date, ``inf``, ``nan`` or a negative number is unusable: a
+    negative wait makes ``time.sleep`` raise, and ``int(inf)`` raises too.
+    """
+    try:
+        seconds = float(header) if header else None
+    except ValueError:
+        return None
+    if seconds is None or not math.isfinite(seconds) or seconds < 0:
+        return None
+    return int(seconds * 1000)
+
+
 def _quote(value: str) -> str:
     """One path segment: room and event ids carry ``!``, ``$`` and ``:``."""
     return quote(value, safe="")
@@ -161,6 +177,10 @@ class MatrixClient:
 
         Raises :class:`TokenRejected` for a refused token and lets
         ``requests.RequestException`` (network failures) through unchanged.
+        A redirect is not followed: it is a :class:`MatrixError` with errcode
+        ``REDIRECT``. The client API never needs one, and the homeserver URL
+        is whatever was typed in, so a redirect could send the bridge's
+        requests (a reply's text, in a PUT body) to any other host.
         """
         response = self._session().request(
             method,
@@ -169,7 +189,10 @@ class MatrixClient:
             json=body,
             headers={"Authorization": f"Bearer {self._token}"},
             timeout=self.timeout if timeout is None else timeout,
+            allow_redirects=False,
         )
+        if 300 <= response.status_code < 400:
+            raise MatrixError(response.status_code, "REDIRECT")
         if response.status_code >= 400:
             raise self._error(response)
         if not response.content:
@@ -190,13 +213,10 @@ class MatrixClient:
             payload = {}
         errcode = payload.get("errcode") if isinstance(payload.get("errcode"), str) else None
         retry_after_ms = payload.get("retry_after_ms")
-        if not isinstance(retry_after_ms, int) or isinstance(retry_after_ms, bool):
-            retry_after_ms = None
+        if (not isinstance(retry_after_ms, int) or isinstance(retry_after_ms, bool)
+                or retry_after_ms < 0):
             header = response.headers.get("Retry-After") if response.headers else None
-            try:
-                retry_after_ms = int(float(header) * 1000) if header else None
-            except ValueError:
-                retry_after_ms = None
+            retry_after_ms = _retry_after_ms(header)
         if response.status_code == 401 or errcode in REJECTED_TOKEN_ERRCODES:
             return TokenRejected(response.status_code, errcode, retry_after_ms)
         return MatrixError(response.status_code, errcode, retry_after_ms)
