@@ -140,3 +140,14 @@ def test_the_replies_the_bot_sends_count_as_its_own():
 def test_without_require_mention_every_message_is_forwarded():
     bridge, _, client = make_bridge({ROOM: 3}, require_mention=False)
     assert forwarded(bridge, client, ROOM, text(ALICE, "lunch anyone?")) == "lunch anyone?"
+
+
+def test_a_very_long_question_is_cut_to_the_utterance_limit():
+    """Matrix takes ~64 kB in one message; the hub gets no more than Telegram's 4096 characters."""
+    import hm_matrix_bridge as bridge_module
+
+    bridge, _, client = make_bridge({ROOM: 3})
+    long_question = "why " * 15000
+    forwarded_text = forwarded(bridge, client, ROOM, text(ALICE, f"{BOT_NAME}: {long_question}"))
+    assert len(forwarded_text) == bridge_module.MAX_UTTERANCE_CHARS == 4096
+    assert long_question.startswith(forwarded_text)

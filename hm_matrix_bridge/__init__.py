@@ -95,6 +95,11 @@ MAX_SYNC_BACKOFF = 60.0
 #: Remembered event ids (the bot's own messages, and looked-up reply targets).
 EVENT_MEMORY = 1024
 
+#: Longest question forwarded to the hub, in characters (Telegram's own message
+#: limit). A Matrix message can carry about 64 kB; past this it is cut, so one
+#: message cannot cost the hub's model many times what a question does.
+MAX_UTTERANCE_CHARS = 4096
+
 #: Replies waiting for the sender thread; one more is dropped, and logged.
 MAX_PENDING_REPLIES = 100
 
@@ -663,7 +668,7 @@ class HiveMindMatrixBridge:
         time is it". A reply's quoted fallback is removed too. In a room with
         more than two members, with ``require_mention``, a message that
         neither mentions the bot nor replies to one of its messages is not
-        addressed to it.
+        addressed to it. The text is cut to ``MAX_UTTERANCE_CHARS``.
         """
         body = content.get("body") or ""
         relates = content.get("m.relates_to") if isinstance(content.get("m.relates_to"), dict) else {}
@@ -684,6 +689,9 @@ class HiveMindMatrixBridge:
         if self.require_mention and not is_dm:
             if not (pill or found or (reply_to and self.is_bot_event(room_id, reply_to))):
                 return None
+        if len(text) > MAX_UTTERANCE_CHARS:
+            LOG.debug(f"cutting a {len(text)}-character question to {MAX_UTTERANCE_CHARS}")
+            text = text[:MAX_UTTERANCE_CHARS]
         return text
 
     def _strip_mentions(self, room_id: str, body: str) -> Tuple[str, bool]:
