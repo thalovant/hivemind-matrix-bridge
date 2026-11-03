@@ -1,6 +1,34 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: managed multi-room Matrix bridge, image, CI, live test, docs set.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Adversarial review of the merged fork: eight fixes (hub outage leak and crash, crash-loop event, m.notice, reply sender, redirects, Retry-After, homeserver URL, question size).
 
 # Maintenance report: hivemind-matrix-bridge
+
+## 2026-11-03: review of the merged fork
+
+**Why:** PR #1 was merged without an automated review. An adversarial read of `main` at `35bb1aea` (security first, then stability, then the contract) found eight problems; AUDIT.md has each one with its lines and test (R1-R8) and the open items (sections 14-20).
+
+**Changes** (branch `fix/review-2026-11-03`, one commit each, oldest first)
+
+1. A hub outage no longer stops the bridge or logs the question: `handle_message` checks the live session (`hub_live`), `forward_to_hivemind` catches what `HiveMessageBusClient.emit` raises (its `RuntimeError` text is the whole serialized message) and logs the type only.
+2. One malformed event can no longer crash-loop the bridge: event ids from `m.relates_to` are used only when they are strings, each message goes through `_handle_one`, and odd sync sections are ignored.
+3. Replies are `m.notice`, so two bots in a room cannot answer each other.
+4. Replies are posted by one sender thread (`speak` queues, `deliver` posts; at most 100 waiting), long replies are split into messages of at most 16000 UTF-8 bytes (4 at most, then cut), `stop` drains for 5 s, and SIGTERM goes through `stop`.
+5. `MatrixClient` follows no redirects (a 3xx is `MatrixError(..., "REDIRECT")`), unusable `Retry-After` values are ignored, and the homeserver URL may not carry credentials, a query or a fragment; plain `http://` to a non-loopback host is warned about.
+6. A forwarded question is cut to 4096 characters.
+7. Docs: AUDIT (review table, section 5 closed, sections 14-20), this entry, `docs/configuration.md`, `docs/index.md`, README, QUICK_FACTS, FAQ, SUGGESTIONS.
+
+**Verification**
+
+- Each new test was run before its fix and failed (for the URL checks: the CLI tests against the old `__main__.py`, 5 failed).
+- `python -m pytest tests -q`: 167 passed (Python 3.12, local; 125 before).
+- `ruff check --isolated --select F,E9 .`: clean.
+- SIGTERM on a real process (the bridge retrying an unreachable homeserver): `shutting down`, exit status 0.
+- Not run locally: the image smoke steps and `tests/integration/live_matrix.py` (CI runs both on the pull request). The live test reads the bot's replies by sender, so `m.notice` does not change what it checks.
+
+**Transparency report**
+
+- **AI model:** Claude Opus 5.5 (`claude-opus-5-5`), in Claude Code.
+- **Actions taken:** reviewed the bridge, the Matrix client, the CLI, the image and CI against the bridge contract and the Telegram fork; checked hivemind-bus-client 1.2.12a1's `emit` and handler dispatch; wrote the failing tests, the fixes and these documents.
+- **Oversight:** requested by the repository owner through the session lead as an independent review; the pull request is left for a human to review and merge.
 
 ## 2026-11-02: Thalovant fork
 

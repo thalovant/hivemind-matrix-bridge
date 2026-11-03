@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: managed multi-room Matrix bridge, Thalovant CI and signed images, docs set added.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: notices, long replies, upgraded rooms, DM invites with a list, homeserver URL.
 
 # FAQ: hivemind-matrix-bridge
 
@@ -49,3 +49,23 @@ No. The managed bridge takes an access token only; `docs/setup.md` shows how to 
 ## Why is the default branch `main` and not `dev`?
 
 This is the Thalovant fork. Upstream's release workflows were removed, so nothing here publishes to PyPI or to upstream's registry; images go to `ghcr.io/thalovant/hivemind-matrix-bridge`.
+
+## Why are the bot's replies grey (notices) and not normal messages?
+
+`HiveMindMatrixBridge.deliver` posts `m.notice`, the message type the Matrix spec reserves for bots and bridges: automated clients never answer one. With `m.text`, two bots in one room (two HiveMind bridges, say) answered each other without end. The bridge itself ignores notices.
+
+## What happens to a very long reply, or a very long question?
+
+A reply over 16000 UTF-8 bytes is split at a line break or space into at most 4 messages, the rest cut with ` [...]` (`split_reply`); a homeserver refuses an event over 64 KiB. A question is cut to 4096 characters before it goes to the hub (`MAX_UTTERANCE_CHARS`, Telegram's own limit).
+
+## A listed room was upgraded and the bot went quiet. Why?
+
+An upgrade makes a new room with a new id. The allow-list holds the old one, so the bot neither accepts an invite to the new room nor answers there. Add the new room id to `MATRIX_ALLOWED_ROOMS` and invite the bot.
+
+## `MATRIX_DM_POLICY=allow` with an allow-list: why does a DM invite stay pending?
+
+Invites are accepted only to listed rooms (`handle_invite`), and a DM starts with an invite. Accepting every invite flagged `is_direct` would let anyone pull the bot into any room by flagging the invite. List the DM's room id, or run without a list (AUDIT.md section 14).
+
+## Which homeserver URLs are refused?
+
+One with a user name or password (requests would replace the token's header with Basic auth), a query or a fragment (`resolve_options`). Plain `http://` to a host other than loopback starts, with a warning: the token would cross the network unencrypted. A redirect from the homeserver is never followed.

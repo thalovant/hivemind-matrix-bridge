@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork: managed multi-room bridge on the client-server API; fork section added, repo rules rewritten for the new design.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: repo rules for the reply sender thread, splitting, m.notice, and handling untrusted event content.
 
 # This is the Thalovant fork
 
@@ -141,9 +141,19 @@ before inventing a new pattern here.
   is denied every message type until an admin runs `hivemind-core allow-msg
   recognizer_loop:utterance <client_id>`. `MATRIX_ALLOWED_ROOMS` is a separate,
   bridge-side filter over which rooms may originate traffic.
-- **Return upstream responses verbatim.** `handle_speak()` posts
-  `message.data["utterance"]` unmodified. The one bridge-authored line is the
-  fallback on `hive.complete_intent_failure`.
-- **Thread safety.** `speak()` runs on the HiveMind bus thread while the sync
-  loop runs on the main thread. `MatrixClient` gives each thread its own HTTP
-  session and serialises sends; keep any new shared state behind a lock.
+- **Return upstream responses verbatim.** `deliver()` posts
+  `message.data["utterance"]` unmodified, as `m.notice`, split only when it is
+  longer than `MAX_BODY_BYTES`. The one bridge-authored line is the fallback on
+  `hive.complete_intent_failure`.
+- **Never block or raise on the hub's thread.** `handle_speak()`/`speak()` run
+  on the HiveMind bus thread, where a slow handler stops the hub connection
+  reading and a raising one makes hivemind-bus-client close it. `speak()` only
+  queues; the sender thread (`_send_replies`) posts. Tests wait with
+  `wait_for_replies()`.
+- **Event content is untrusted.** Any room member decides what `content`
+  holds; read it through `_mapping()`/`_event_id()` and let `_handle_one()`
+  contain the rest. Never put `str(error)` from hivemind-bus-client in a log
+  line: its `emit()` error text is the whole serialized message.
+- **Thread safety.** The sync loop runs on the main thread, replies on the
+  sender thread. `MatrixClient` gives each thread its own HTTP session and
+  serialises sends; keep any new shared state behind a lock.

@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Rewritten for the managed bridge: every environment setting, its default and the rules behind it.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: replies are m.notice from a sender thread and split when long, questions cut to 4096 characters, homeserver URL rules, SIGTERM.
 
 # Configuration
 
@@ -8,7 +8,7 @@ Every setting comes from a flag, an environment variable or, for a secret, a fil
 
 | Variable | Flag | Default | Notes |
 | --- | --- | --- | --- |
-| `MATRIX_HOMESERVER` | `--homeserver` | required | The client API base URL, `https://matrix.example.org`. No `.well-known` discovery: give the URL clients actually call. |
+| `MATRIX_HOMESERVER` | `--homeserver` | required | The client API base URL, `https://matrix.example.org`. No `.well-known` discovery: give the URL clients actually call. No user name or password, query or fragment in it (usage error). Plain `http://` to a host other than loopback is logged as a warning: the token would cross the network unencrypted. Redirects are not followed: a 3xx answer is an error, retried like a server error. |
 | `MATRIX_ACCESS_TOKEN`, `MATRIX_ACCESS_TOKEN_FILE` | `--access-token` | required | An access token of the bot account. There is no password login. Sent only in the `Authorization` header. |
 | `MATRIX_USER_ID` | `--user-id` | the token's own account | `@bot:example.org`. When set, `/account/whoami` must return it, or the bridge stops as `token_rejected`. |
 | `MATRIX_ALLOWED_ROOMS` | `--allowed-room` (repeatable) | none | Room ids separated by commas or spaces: `!opaque:server`, or `!opaque` for room version 12. Aliases (`#room:server`) are refused: Room settings > Advanced shows the id. |
@@ -56,7 +56,9 @@ The user id, display names and `matrix.to` links are removed with a following `:
 
 Never answered: notices (`m.notice`, what other bots send), edits (`m.replace`), anything but `m.text`, the bot's own messages, the initial sync, and anything in a newly joined room before the bot's join event.
 
-Replies are `m.text` with `m.mentions: {}` (they ping nobody), in the thread when the question was in one, and only to rooms the bridge answers in, whatever room the hub's context names.
+A question longer than 4096 characters (`MAX_UTTERANCE_CHARS`) is cut to that before it goes to the hub.
+
+Replies are `m.notice` (what bots send, and what bots never answer, so two bots in one room cannot loop) with `m.mentions: {}` (they ping nobody), in the thread when the question was in one, and only to rooms the bridge answers in, whatever room the hub's context names. They are posted by one sender thread, in order, never on the hub's thread: at most 100 wait (`MAX_PENDING_REPLIES`), one more is dropped and logged. A reply over 16000 UTF-8 bytes (`MAX_BODY_BYTES`) is split at a line break or space into at most 4 messages; the rest is cut and ends with ` [...]`. Sends are paced 1 s apart; a rate-limited send is retried up to 3 times with the same transaction id.
 
 ## Exit and termination
 
@@ -67,3 +69,4 @@ Replies are `m.text` with `m.mentions: {}` (they ping nobody), in the thread whe
 | Token of another account than `MATRIX_USER_ID` | 3 | `token_rejected` |
 | Hub refuses the bridge's credentials | 1 | — |
 | Homeserver unreachable or failing | keeps retrying with a backoff up to 60 s; `/readyz` 503 | — |
+| SIGTERM (pod stopped) or Ctrl-C | 0, after up to 5 s for queued replies | — |

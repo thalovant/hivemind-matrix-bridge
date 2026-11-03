@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: proposals for the managed Matrix bridge and its platform integration.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review: reply-off-the-bus-thread done; homeserver URL checks and egress for the platform added.
 
 # Suggestions: hivemind-matrix-bridge
 
@@ -20,11 +20,16 @@ Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: proposa
 - **Proposal:** a persistent device store per bot (a small volume, or a Secret the bridge updates) and an Olm/Megolm implementation (`vodozemac` bindings or `matrix-nio[e2e]`), with device verification decided by the platform.
 - **Impact:** high; large change, needs a storage decision on the platform first.
 
-## Reply off the bus thread
+## Reply off the bus thread (done 2026-11-03)
 
 - **Problem:** AUDIT.md section 5.
-- **Proposal:** queue replies to a sender thread and return at once; log failures from it.
-- **Impact:** medium; removes head-of-line blocking on a slow homeserver.
+- **Done:** `speak` queues, one sender thread posts (AUDIT.md R4).
+
+## Check the homeserver URL where it is entered
+
+- **Problem:** AUDIT.md section 19 and R7: the homeserver URL is whatever the customer types. The bridge refuses credentials, queries and fragments and warns on plain `http://`, but only once the pod starts, and it cannot tell a public homeserver from an internal address.
+- **Proposal:** the platform API accepts only `https://` URLs with a public host name, and the bridge's egress policy allows 443 to public addresses only (no cluster, node, link-local or metadata ranges).
+- **Impact:** high for a managed service; small change in the API and the policy.
 
 ## A termination reason for a wrong homeserver
 

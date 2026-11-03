@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Rewritten for the managed multi-room bridge: environment settings, allow-list, DM policy, encryption limit, image.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: replies as notices, long replies split, questions cut.
 
 # HiveMind Matrix Bridge
 
@@ -18,6 +18,7 @@ Matrix rooms  ⇄  homeserver  ⇄  hivemind-matrix-bridge  ⇄  HiveMind hub  �
 - In a room with more people, only messages that **mention the bot** (a pill, its user id or its display name) or **reply to one of its messages**. The mention is removed before the text goes to the hub. `MATRIX_REQUIRE_MENTION=false` answers every message.
 - **End-to-end encrypted rooms are not supported.** The bridge keeps no device keys, so it never answers in an encrypted room and logs the room once. Create rooms for the bot with encryption off (it cannot be turned off later).
 - Nothing from before the bridge started, or from before the bot joined a room, is answered.
+- Replies are **notices** (`m.notice`): the message type bots send and never answer, so two bots in a room cannot loop. They ping nobody. A reply too long for one Matrix message is split (at most 4 messages); a question is cut to 4096 characters.
 
 ## Run it
 

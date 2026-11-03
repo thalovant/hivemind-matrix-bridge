@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: docs index for the managed multi-room Matrix bridge.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: the reply path (sender thread, m.notice, split replies) and the question cut.
 
 # hivemind-matrix-bridge
 
@@ -17,7 +17,7 @@ A HiveMind bridge for Matrix: a satellite whose input and output are a Matrix bo
 
 | File | What it holds |
 | --- | --- |
-| `hm_matrix_bridge/__init__.py` | `HiveMindMatrixBridge`: `identify` (whoami), `connect_hivemind`, `run_matrix` (sync loop), `process_sync`, `handle_invite`, `handle_message`, `answer_policy` (allow-list, DM policy), `is_direct`, `addressed_text` (mentions, replies), `session_id`, `speak`, `ready`; `RoomState`; `sync_filter` |
+| `hm_matrix_bridge/__init__.py` | `HiveMindMatrixBridge`: `identify` (whoami), `connect_hivemind`, `run_matrix` (sync loop), `process_sync`, `handle_invite`, `handle_message`, `answer_policy` (allow-list, DM policy), `is_direct`, `addressed_text` (mentions, replies), `forward_to_hivemind`, `hub_live`, `session_id`, `speak` (queues), `deliver` (posts), `wait_for_replies`, `ready`; `RoomState`; `sync_filter`, `split_reply` |
 | `hm_matrix_bridge/matrix.py` | `MatrixClient` (client-server API over `requests`: `whoami`, `sync`, `join`, `joined_members`, `event`, `send_message` with pacing and bounded rate-limit retries); `MatrixError`, `TokenRejected`, `AccountMismatch` |
 | `hm_matrix_bridge/__main__.py` | `resolve_options` (flags, environment, `*_FILE` secrets), `write_termination_message`, `main` (exit status 3 and `token_rejected` on a refused token) |
 | `hm_matrix_bridge/health.py` | `HealthServer`: `/healthz` and `/readyz` |
@@ -30,7 +30,7 @@ A HiveMind bridge for Matrix: a satellite whose input and output are a Matrix bo
 1. `run_matrix` long-polls `/sync` with `SYNC_FILTER` (messages, encryption and membership only, members lazy-loaded so the room summary carries the joined member count).
 2. `process_sync` updates `RoomState` (encrypted, joined members, the bot's display name in the room), accepts allowed invites, and hands each new `m.text` message to `handle_message`.
 3. `handle_message` drops edits, notices, the bot's own messages and encrypted rooms, asks `answer_policy` whether the room is answered, then `addressed_text` whether the message is for the bot (mention stripped).
-4. `forward_to_hivemind` emits `recognizer_loop:utterance` with `room_id`, `thread_id` (in a thread), `user.matrix_user_id` and `session.session_id` in the context.
-5. The hub's `speak` arrives on the bus thread; `speak` checks the room is still one the bridge answers in and posts `m.text` with `m.mentions: {}` (in the thread when the question was).
+4. `forward_to_hivemind` emits `recognizer_loop:utterance` (the question cut to `MAX_UTTERANCE_CHARS`) with `room_id`, `thread_id` (in a thread), `user.matrix_user_id` and `session.session_id` in the context, only while the hub session is live (`hub_live`); a failed emit drops the message and logs the exception type only.
+5. The hub's `speak` arrives on the bus thread; `speak` only queues it. The sender thread (`_send_replies`) calls `deliver`, which checks the room is still one the bridge answers in, splits a long reply (`split_reply`) and posts `m.notice` with `m.mentions: {}` (in the thread when the question was).
 
 Related: the hub ([HiveMind-core](https://github.com/JarbasHiveMind/HiveMind-core)), the client library ([hivemind-bus-client](https://github.com/JarbasHiveMind/hivemind-bus-client)), the Telegram sibling ([thalovant/hivemind-telegram-bridge: docs/index.md](https://github.com/thalovant/hivemind-telegram-bridge/blob/main/docs/index.md)).
