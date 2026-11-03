@@ -36,7 +36,7 @@ python tests/integration/live_matrix.py --image hivemind-matrix-bridge:it --tran
 
 `CONTAINER_ENGINE` (`docker` or `podman`; default podman when installed) and `CONTAINER_ENGINE_ARGS` (for example `--cgroup-manager=cgroupfs` for rootless podman without a systemd user session) choose how containers run. On an SELinux host the bind mounts are relabelled (`:z`). `--keep` leaves the containers running. Exit status 0 means every check passed; the bridge log is saved next to the secrets in the run's temporary directory.
 
-CI runs it as the `live` job of `.github/workflows/ci.yml`, on pull requests and on `main`. It does not gate publishing.
+CI runs it as the `live` job of `.github/workflows/ci.yml`, on pull requests and on `main`. It does not gate publishing. On the pull request's first run (GitHub runner, docker) every check passed in about 40 seconds.
 
 ## Transcript (2026-11-02, podman 5, SELinux enforcing)
 

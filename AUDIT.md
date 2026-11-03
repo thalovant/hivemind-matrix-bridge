@@ -64,3 +64,8 @@ Evidence: `python -m pytest tests -q` (125 passed, 2026-11-02, Python 3.12), a m
 
 - **Where:** `pyproject.toml:16` (`hivemind-bus-client>=1.0.16a1`), `Dockerfile:1` (`FROM python:3.14-slim`).
 - **Finding:** each build can resolve newer alphas and a newer base; images are not reproducible across builds.
+
+## 13. CodeQL flags the live test's credential files
+
+- **Where:** `tests/integration/live_matrix.py:247` (`write_secret`), CodeQL alert 1, `py/clear-text-storage-sensitive-data`.
+- **Finding:** the harness writes throwaway hub credentials and the test bot's token to files, because the bridge reads secrets from files exactly as the operator mounts them. They live in a per-run `mkdtemp` directory (mode 0700) and are made for that run. Not a production path; it can be dismissed as used in tests.

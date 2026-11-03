@@ -12,7 +12,8 @@ Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: managed
 2. The image: uid/gid 10001, `HOME=/home/bridge`, entrypoint without arguments, read-only root, no source left in it. The upstream entrypoint put the Matrix token on the command line.
 3. `.github/workflows/ci.yml` as in the Telegram fork (tests on 3.12 and 3.14, ruff, image smoke, on `main` only a signed push to `ghcr.io/thalovant/hivemind-matrix-bridge`); the smoke job also runs the image read-only as uid 10001 against a stub homeserver that refuses the token. Every upstream workflow removed (PyPI alpha and stable releases, image push to upstream's registry, checks wired to `dev`).
 4. `tests/integration/live_matrix.py`: the image against Conduit and a real hivemind-core hub, run by CI as the `live` job.
-5. Docs set: README, `docs/index.md`, `docs/setup.md`, `docs/configuration.md`, `docs/live-test.md`, QUICK_FACTS, FAQ, AUDIT, SUGGESTIONS, this report, AGENTS fork section; upstream's `docs/examples.md` and `docs/operator-setup.md` removed (they described the removed CLI); CHANGELOG kept with a header.
+5. `.venv/` and `.ruff_cache/` ignored (AGENTS.md has the virtualenv made inside the clone).
+6. Docs set: README, `docs/index.md`, `docs/setup.md`, `docs/configuration.md`, `docs/live-test.md`, QUICK_FACTS, FAQ, AUDIT, SUGGESTIONS, this report, AGENTS fork section; upstream's `docs/examples.md` and `docs/operator-setup.md` removed (they described the removed CLI); CHANGELOG kept with a header.
 
 **Rationale:** run Matrix as a managed bridge workload like Telegram and Discord: secrets only in files, nothing answered outside the configured rooms, nothing forwarded that is not addressed to the bot, no message text in logs, a refused token reported to the platform, and probes it can use.
 
@@ -23,7 +24,8 @@ Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork set up: managed
 - `ruff check --isolated --select F,E9 .`: clean.
 - Image built locally with podman: `--help` answers, `id` is uid/gid 10001, refuses to start without settings naming `MATRIX_HOMESERVER` / `MATRIX_ACCESS_TOKEN`, no `/src` left. The CI read-only smoke step, run locally with podman: exit status 3, `token_rejected` in the termination log, no write error, token not logged.
 - Live run (`docs/live-test.md`): Conduit 0.10.9 in a container, hivemind-core 5.3.10a1 via hivescope, the image read-only as uid 10001 with the Noise key mounted. Ready, joined only the two listed rooms, answered a mention, ignored an unmentioned message, the encrypted room (logged once) and the DM, the hub pinned the mounted Noise key, a restart reconnected and re-answered nothing, the log held no message text or secret. Every check passed.
-- Not verified: CI on GitHub until the pull request runs it, Synapse, a production homeserver, the operator rendering a Matrix bridge (it does not support one yet, see SUGGESTIONS.md).
+- CI on the pull request (run 41577736217, head dd3e7d6): test 3.12 and 3.14, smoke (including the read-only `token_rejected` step), `live` (every check passed on the runner with docker) and the image build all passed. CodeQL raised one alert on test code, AUDIT.md section 13.
+- Not verified: Synapse, a production homeserver, the operator rendering a Matrix bridge (it does not support one yet, see SUGGESTIONS.md).
 
 **Transparency report**
 
