@@ -1,3 +1,29 @@
+Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork: managed multi-room bridge on the client-server API; fork section added, repo rules rewritten for the new design.
+
+# This is the Thalovant fork
+
+The rules in this section win over anything below them, which is upstream's
+guidance kept for context:
+
+- Default branch is `main`. Branch from `main`, open a PR into `main`.
+- Commit under your own identity; the upstream identity rule does not apply.
+- Nothing here publishes to PyPI or to upstream's registry. CI
+  (`.github/workflows/ci.yml`) tests every PR and, on `main`, publishes a
+  signed image to `ghcr.io/thalovant/hivemind-matrix-bridge`.
+- Every change to the bridge's behaviour keeps a test that fails without it
+  and passes with it. A documentation or workflow change has no behaviour to
+  test: it is validated by the build, the lint selection and, for the
+  workflow, a CI run on the pull request.
+- Update QUICK_FACTS.md, FAQ.md, MAINTENANCE_REPORT.md, AUDIT.md and
+  SUGGESTIONS.md with every change.
+- Every Markdown file starts with a `Last Edit: <author> - <date> - Motive:
+  <summary>` line, and MAINTENANCE_REPORT.md entries are dated and carry a
+  transparency report for AI-assisted work. This is the Thalovant workspace
+  convention and replaces upstream's "timeless text, no dates" rule below for
+  this fork's documentation.
+
+---
+
 # AGENTS.md — `HiveMind-matrix-bridge`
 
 Guidance for AI coding agents (and humans) working in this repository. Read it
@@ -6,35 +32,38 @@ code and that, if ignored, produce work that will be rejected.
 
 ## Repo
 
-Relays a Matrix chatroom to a HiveMind node: a HiveMind bridge is a satellite
-whose input and output are a chat platform instead of a microphone. Messages
-that mention the bot become HiveMind utterances; the hub's spoken reply posts
-back into the room. Part of the [HiveMind](https://github.com/JarbasHiveMind)
+Bridges a Matrix bot account to a HiveMind node: a HiveMind bridge is a
+satellite whose input and output are a chat platform instead of a microphone.
+Messages addressed to the bot in the rooms it answers in become
+`recognizer_loop:utterance` bus messages; the hub's `speak` replies are posted
+back into the same room. Part of the [HiveMind](https://github.com/JarbasHiveMind)
 ecosystem — a protocol for connecting satellite devices to a hub running
 [OpenVoiceOS](https://github.com/OpenVoiceOS). The hub is
-[HiveMind-core](https://github.com/JarbasHiveMind/HiveMind-core); the
-underlying client library is
-[hivemind-bus-client](https://github.com/JarbasHiveMind/hivemind-bus-client),
-here wrapped by `ovos-solver-hivemind-plugin`'s `HiveMindSolver`. Sibling
-bridges with the same shape:
+[HiveMind-core](https://github.com/JarbasHiveMind/HiveMind-core); the client
+library is
+[hivemind-bus-client](https://github.com/JarbasHiveMind/hivemind-bus-client).
+Sibling bridges with the same shape:
 [hivemind-telegram-bridge](https://github.com/JarbasHiveMind/hivemind-telegram-bridge)
 and the other chat-platform bridges under the org — check them for prior art
 before inventing a new pattern here.
 
 ## Layout / build / test
 
-- Package module: `hm_matrix_bridge/`. Tests live in `tests/` (unit smoke
-  tests plus `tests/e2e/`, check before adding — do not create a second test
-  directory).
+- Package module: `hm_matrix_bridge/` (`__init__.py` the bridge, `matrix.py`
+  the client-server API client, `health.py` the probes, `__main__.py` the
+  CLI). Unit tests live in `tests/`; the live run against a real homeserver
+  and hub lives in `tests/integration/` (check before adding — do not create
+  another test directory).
 - Set up a throwaway environment inside your clone; never touch a shared venv:
   `python3 -m venv .venv && VIRTUAL_ENV=$PWD/.venv uv pip install -e ".[test]" --prerelease=allow`
-- Run the suite in the foreground: `python3 -m pytest tests/ -q`. The default
-  suite mocks both `MatrixBot` and `HiveMindSolver`, so it runs without a live
-  homeserver or hub — that also means it cannot catch a real handshake hang or
-  a real Matrix API break; treat it as a shape/wiring check, not a
-  live-behaviour guarantee. `tests/e2e/` drives the bridge against a real
-  `hivemind-core` hub booted in-process (only the Matrix side is mocked); it
-  needs the `e2e` extra (`uv pip install -e ".[e2e]" --prerelease=allow`).
+- Run the suite in the foreground: `python3 -m pytest tests/ -q`. It runs
+  without a homeserver or a hub: `tests/fakes.py` scripts the Matrix side and
+  mocks the hub client, `tests/homeserver.py` is a scripted homeserver over
+  real HTTP for the client and end-to-end tests.
+- The live run (`tests/integration/live_matrix.py`, see
+  `docs/live-test.md`) needs a container engine and
+  `tests/integration/requirements.txt`; it runs the built image against
+  Conduit and a real hivemind-core hub. CI runs it as the `live` job.
 - `uv`, never `pip`. If latest prereleases fail to install or resolve, that is
   a bug to FIX at the source, not to work around with a pin downgrade.
 
@@ -64,13 +93,14 @@ before inventing a new pattern here.
 
 - **Floor pins only** (`>=X.Y.Za1`), bumped when a feature or fix is actually
   needed — with a one-line comment saying why. No upper caps unless a specific
-  released version is genuinely broken (say which and why; `requirements.txt`
-  already does this for `hivemind-bus-client<2.0.0` and the `ovos-*` floors —
-  read those comments before touching a pin).
+  released version is genuinely broken (say which and why).
 - **No lockfiles, ever.** Target the latest alphas (`--prerelease=allow`).
-- Everything in `pyproject.toml`/`requirements.txt` (deps, metadata, version).
-  Never install from git — depend on a published PyPI alpha.
+- Everything in `pyproject.toml` (deps, metadata, version). Never install from
+  git — depend on a published PyPI alpha.
 - Apache-2.0. Do not add GPL/AGPL dependencies.
+- The Matrix side needs only `requests`: do not bring back `matrix-client`
+  (unmaintained) or add a Matrix SDK for what `hm_matrix_bridge/matrix.py`
+  already does.
 
 ## Tests
 
@@ -86,46 +116,34 @@ before inventing a new pattern here.
 
 ## Repo-specific rules
 
-- **Composition, not inheritance — this repo does not yet fully comply.**
-  `HiveMindMatrixBridge.__init__` (`hm_matrix_bridge/__init__.py`) constructs
-  `HiveMindSolver(config={..., "autoconnect": True})` directly, and
-  `HiveMindSolver` opens its `HiveMessageBusClient` connection as a side
-  effect of construction rather than a separate, explicit connect step. This
-  is a standing requirement, not a description of current behaviour: the
-  client should be built (or injected) without connecting, and connected
-  once, explicitly, from a `start()`-style method — never re-connected or
-  re-run on every message. Any change that touches bridge construction should
-  move toward this shape rather than add more logic on top of the
-  `autoconnect=True` shortcut.
-- **`connect()` must bound `handshake_max_retries`.** The
-  `hivemind-bus-client` floor is `>=1.0.13a1`; that client's own default for
-  `handshake_max_retries` is `None`, meaning retry forever. Whatever layer in
-  this bridge ends up calling `connect()` (directly, or through
-  `HiveMindSolver`/`autoconnect`) must bound it explicitly — an unbounded
-  default hangs indefinitely against a stalled or unreachable hub instead of
-  failing fast. Treat an unbounded `connect()` call anywhere in the chain as a
-  bug to fix, not an acceptable default.
+- **Composition, not inheritance.** `HiveMindMatrixBridge` builds (or accepts
+  an injected) `HiveMessageBusClient` and `MatrixClient` in `__init__` and
+  opens neither there. The hub connection happens once, in
+  `connect_hivemind()`, called from `start()`. Never add a second call to
+  `connect()` or `run_forever()`: the client owns its reconnect worker once
+  `connect()` returns.
+- **`connect()` must bound `handshake_max_retries`** (`DEFAULT_HANDSHAKE_MAX_RETRIES`).
+  The client's own default retries forever and hangs the bridge on a stalled
+  or unreachable hub. A refused identity raises `ConnectionRefusedError`; do
+  not add retries on top of it.
+- **A refused Matrix token is final.** `MatrixClient` turns a 401 or a token
+  errcode into `TokenRejected`; `main()` writes `token_rejected` to
+  `/dev/termination-log` and exits 3. Network failures and server errors are
+  retried with a backoff instead. Keep the two apart.
+- **The first sync is history.** Nothing in the initial `/sync`, and nothing
+  in a newly joined room before the bot's own join event, is answered.
+- **Encrypted rooms are refused**, never half-supported: the bridge keeps no
+  device keys. `_mark_encrypted` logs a room once.
+- **Never log message text or the token.** Log room ids, lengths, HTTP status
+  and errcode (`MatrixError.describe()`), never a body, a reply or a URL with
+  parameters. `tests/test_logs.py` and the live run check this.
 - **The hub owns ACL, not this bridge.** A freshly registered HiveMind client
   is denied every message type until an admin runs `hivemind-core allow-msg
-  recognizer_loop:utterance <client_id>` (and usually `speak`). This bridge
-  has no way to grant itself permissions and must not try to work around a
-  denial locally — a silently dropped message on the hub side is the hub
-  doing its job, not a bug here.
-- **Rejected credentials must fail fast.** A bad access key or password
-  should surface as a clean, fast failure — never a bridge that spins forever
-  retrying while appearing connected. This follows directly from bounding
-  `handshake_max_retries`; do not add bridge-level retry/backoff logic that
-  defeats it.
-- **Return upstream responses verbatim.** `handle_matrix_utterance()` forwards
-  `self.solver.get_spoken_answer(utt)` to the room unmodified; do not
-  reformat, truncate, or add bridge-specific decoration to hub-authored text.
-  The one exception is the fixed fallback string `"Error"` when the solver
-  returns nothing, which is bridge-authored by design because the hub sent no
-  utterance to relay.
-- **Matrix listener runs on its own thread.** `MatrixBot.connect_to_matrix()`
-  calls `self.client.start_listener_thread()`, so `handle_matrix_utterance()`
-  runs off the main thread. `HiveMindSolver.get_spoken_answer()` is a
-  synchronous, blocking call made from that same listener thread — it must
-  stay synchronous (or be dispatched through an explicit thread-safe
-  mechanism) rather than assumed to run on, or block, the process's main
-  thread.
+  recognizer_loop:utterance <client_id>`. `MATRIX_ALLOWED_ROOMS` is a separate,
+  bridge-side filter over which rooms may originate traffic.
+- **Return upstream responses verbatim.** `handle_speak()` posts
+  `message.data["utterance"]` unmodified. The one bridge-authored line is the
+  fallback on `hive.complete_intent_failure`.
+- **Thread safety.** `speak()` runs on the HiveMind bus thread while the sync
+  loop runs on the main thread. `MatrixClient` gives each thread its own HTTP
+  session and serialises sends; keep any new shared state behind a lock.

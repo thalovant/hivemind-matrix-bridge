@@ -1,3 +1,5 @@
+Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Thalovant fork: header added; upstream release history kept as it was, no fork release recorded here.
+
 # Changelog
 
 ## [0.3.0a1](https://github.com/JarbasHiveMind/HiveMind-matrix-bridge/tree/0.3.0a1) (2026-09-18)
