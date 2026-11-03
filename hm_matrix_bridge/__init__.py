@@ -422,13 +422,13 @@ class HiveMindMatrixBridge:
 
         With ``initial`` the rooms are learned and nothing is answered.
         """
-        rooms = answer.get("rooms") if isinstance(answer.get("rooms"), dict) else {}
-        for room_id in (rooms.get("leave") or {}):
+        rooms = _mapping(answer.get("rooms"))
+        for room_id in _mapping(rooms.get("leave")):
             self.rooms.pop(room_id, None)
-        for room_id, room in (rooms.get("join") or {}).items():
+        for room_id, room in _mapping(rooms.get("join")).items():
             if isinstance(room, dict):
                 self._process_joined_room(room_id, room, initial)
-        for room_id in (rooms.get("invite") or {}):
+        for room_id in _mapping(rooms.get("invite")):
             self.handle_invite(room_id)
 
     def _process_joined_room(self, room_id: str, room: Dict[str, Any], initial: bool) -> None:
@@ -446,7 +446,7 @@ class HiveMindMatrixBridge:
                 member_changed |= self._apply_state(room_id, state, event)
                 if (new_room and event_type == "m.room.member"
                         and event.get("state_key") == self.user_id
-                        and (event.get("content") or {}).get("membership") == "join"):
+                        and _mapping(event.get("content")).get("membership") == "join"):
                     answering = True
                 continue
             if event_type == "m.room.encrypted":
@@ -455,13 +455,28 @@ class HiveMindMatrixBridge:
                 if event.get("sender") == self.user_id:
                     self._remember(room_id, event.get("event_id"), True)
                 elif answering:
-                    self.handle_message(room_id, event)
-        summary = room.get("summary") if isinstance(room.get("summary"), dict) else {}
+                    self._handle_one(room_id, event)
+        summary = _mapping(room.get("summary"))
         count = summary.get("m.joined_member_count")
         if isinstance(count, int) and not isinstance(count, bool):
             state.joined_members = count
         elif member_changed:
             state.joined_members = None  # recount on the next message
+
+    def _handle_one(self, room_id: str, event: Dict[str, Any]) -> None:
+        """:meth:`handle_message`, so that one event it cannot handle drops only itself.
+
+        Every room member decides what an event's ``content`` holds; an
+        exception from one must not end the sync loop (and with it the
+        bridge). A refused token still does.
+        """
+        try:
+            self.handle_message(room_id, event)
+        except TokenRejected:
+            raise
+        except Exception as error:
+            LOG.warning(f"dropped a message in room {room_id} that could not be handled "
+                        f"({type(error).__name__})")
 
     def _apply_state(self, room_id: str, state: RoomState, event: Dict[str, Any]) -> bool:
         """Apply one state event; whether it changed someone's membership."""
@@ -537,7 +552,7 @@ class HiveMindMatrixBridge:
             LOG.warning("dropping a Matrix message, the HiveMind session is not up")
             return
 
-        thread_id = relates.get("event_id") if relates.get("rel_type") == "m.thread" else None
+        thread_id = _event_id(relates.get("event_id")) if relates.get("rel_type") == "m.thread" else None
         self.forward_to_hivemind(text, sender, room_id, thread_id)
 
     def answer_policy(self, room_id: str) -> Tuple[bool, bool]:
@@ -585,7 +600,7 @@ class HiveMindMatrixBridge:
         """
         body = content.get("body") or ""
         relates = content.get("m.relates_to") if isinstance(content.get("m.relates_to"), dict) else {}
-        reply_to = (relates.get("m.in_reply_to") or {}).get("event_id")
+        reply_to = _event_id(_mapping(relates.get("m.in_reply_to")).get("event_id"))
         if relates.get("is_falling_back") is True:
             reply_to = None  # a thread's fallback reply, not a real one
         if reply_to:
@@ -743,7 +758,21 @@ class HiveMindMatrixBridge:
 
 def _section_events(section: Any) -> Iterable[Dict[str, Any]]:
     events = section.get("events") if isinstance(section, dict) else None
-    return [event for event in events or () if isinstance(event, dict)]
+    return [event for event in events if isinstance(event, dict)] if isinstance(events, list) else []
+
+
+def _mapping(value: Any) -> Dict[str, Any]:
+    """``value`` when it is a JSON object, else an empty one."""
+    return value if isinstance(value, dict) else {}
+
+
+def _event_id(value: Any) -> Optional[str]:
+    """``value`` when it can be an event id (a non-empty string), else ``None``.
+
+    Anything in an event's ``content`` is whatever the sender put there: the
+    homeserver does not check the shape of ``m.relates_to``.
+    """
+    return value if isinstance(value, str) and value else None
 
 
 __all__ = ["HiveMindMatrixBridge", "platform"]

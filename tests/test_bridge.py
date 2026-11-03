@@ -8,13 +8,14 @@ import threading
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 from ovos_bus_client.message import Message
 
 import hm_matrix_bridge as bridge_module
 from fakes import (ALICE, BOB, BOT, BOT_NAME, DM, OTHER, ROOM, FakeMatrix, encryption,
                    invited, joined, make_bridge, member, text, utterances)
 from hm_matrix_bridge import HiveMindMatrixBridge
-from hm_matrix_bridge.matrix import AccountMismatch, MatrixError, TokenRejected
+from hm_matrix_bridge.matrix import AccountMismatch, MatrixClient, MatrixError, TokenRejected
 
 
 def say(bridge, room_id, event, members=None):
@@ -465,3 +466,61 @@ def test_a_message_while_the_hub_reconnects_is_dropped_not_emitted():
     client.handshake_event.set()
     say(bridge, DM, text(ALICE, "hello again"))
     assert [utterance for utterance, _ in utterances(client)] == ["hello again"]
+
+
+@pytest.mark.parametrize("relates", [
+    {"m.in_reply_to": "$not-an-object"},
+    {"m.in_reply_to": ["$a", "$b"]},
+    {"m.in_reply_to": {"event_id": 5}},
+    {"m.in_reply_to": {"event_id": {"$": 1}}},
+    {"rel_type": "m.thread", "event_id": {"$": 1}},
+    {"rel_type": "m.thread", "event_id": ["$root"]},
+])
+def test_a_malformed_relation_from_a_member_cannot_stop_the_bridge(relates):
+    """Any member can put any JSON in ``content``: the homeserver does not check it."""
+    bridge, matrix, client = make_bridge({ROOM: 3})
+    offline = MagicMock()
+    offline.request.side_effect = requests.ConnectionError()
+    # the real client's path building (id quoting), never a real request
+    matrix.event = MatrixClient("https://matrix.example.org", "t",
+                                session_factory=lambda: offline).event
+    say(bridge, ROOM, text(ALICE, "odd, no mention", **{"m.relates_to": relates}))
+    say(bridge, ROOM, text(ALICE, f"{BOT_NAME} odd", **{"m.relates_to": relates}))
+    say(bridge, ROOM, text(ALICE, f"{BOT_NAME} still there?"))
+    texts = [utterance for utterance, _ in utterances(client)]
+    assert texts[-1] == "still there?"
+    for _, context in utterances(client):
+        assert isinstance(context.get("thread_id", ""), str)
+
+
+def test_one_event_that_cannot_be_handled_does_not_stop_the_others(monkeypatch):
+    bridge, _, client = make_bridge({ROOM: 3})
+    original = bridge.addressed_text
+
+    def flaky(room_id, content, is_dm):
+        if content.get("body", "").endswith("boom"):
+            raise KeyError("x")
+        return original(room_id, content, is_dm)
+
+    monkeypatch.setattr(bridge, "addressed_text", flaky)
+    bridge.process_sync(joined(ROOM, text(ALICE, f"{BOT_NAME} boom"), text(ALICE, f"{BOT_NAME} fine")))
+    assert [utterance for utterance, _ in utterances(client)] == ["fine"]
+
+
+def test_a_refused_token_while_handling_a_message_is_not_swallowed():
+    bridge, matrix, _ = make_bridge({ROOM: 3})
+    matrix.event = MagicMock(side_effect=TokenRejected(401, "M_UNKNOWN_TOKEN"))
+    with pytest.raises(TokenRejected):
+        say(bridge, ROOM, text(ALICE, "re: that", **{"m.relates_to": {"m.in_reply_to": {"event_id": "$x"}}}))
+
+
+@pytest.mark.parametrize("answer", [
+    {"rooms": {"join": ["!a:example.org"]}},
+    {"rooms": {"join": {ROOM: {"timeline": {"events": 5}}}}},
+    {"rooms": {"leave": 5, "invite": "x"}},
+    {"rooms": []},
+])
+def test_an_odd_sync_answer_is_ignored_not_fatal(answer):
+    bridge, _, _ = make_bridge({ROOM: 3})
+    bridge.process_sync(answer)
+    assert ROOM in bridge.rooms
