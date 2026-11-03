@@ -1,12 +1,11 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review: reply-off-the-bus-thread done; homeserver URL checks and egress for the platform added.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Platform integration and the RSA identity done in the operator; the homeserver URL check is in the platform API's connector catalog change.
 
 # Suggestions: hivemind-matrix-bridge
 
-## Platform integration (operator and API)
+## Platform integration (operator and API) (done in the operator, 2026-11-03)
 
-- **Problem:** the operator's `HiveMindBridge` knows Telegram and Discord only. Its allow-list validation takes numeric ids (`_CHAT_ID = -?[0-9]{1,20}` in `operator_lib/bridge_manager.py`), and `BridgeNetwork` has no place for the two non-secret Matrix settings.
-- **Proposal:** a `matrix` network entry with `token_env=MATRIX_ACCESS_TOKEN`, `allowed_env=MATRIX_ALLOWED_ROOMS`, `mention_env=MATRIX_REQUIRE_MENTION`, `scope_env=MATRIX_SESSION_SCOPE` (`person`/`chat` map as for Telegram), plus `MATRIX_HOMESERVER` and `MATRIX_USER_ID` from new spec fields (homeserver URL, bot user id) and `MATRIX_DM_POLICY` left at `auto`. Room ids validated as `!opaque` with an optional `:server` (room version 12 ids have none). The bridge's egress policy must reach the customer's homeserver on 443, which is any host, unlike Telegram's and Discord's fixed APIs.
-- **Impact:** high; required before Matrix can be offered.
+- **Problem:** the operator's `HiveMindBridge` knew Telegram and Discord only: numeric chat ids and no place for the two non-secret Matrix settings.
+- **Done:** hivemind-k8s-operator#121 keeps no network table. The platform renders each bridge's `env` (`MATRIX_HOMESERVER`, `MATRIX_USER_ID` when set, `MATRIX_REQUIRE_MENTION`, `MATRIX_SESSION_SCOPE`, `MATRIX_DM_POLICY=deny`), `secretEnv` (`MATRIX_ACCESS_TOKEN`, mounted as `MATRIX_ACCESS_TOKEN_FILE`) and `allowedEnv` (`MATRIX_ALLOWED_ROOMS`), and the operator applies them within guard rails; allowed entries are any id without spaces or commas, at most 50. The Matrix entry in the platform's connector catalog (room ids `^![A-Za-z0-9._=/+-]+(:[A-Za-z0-9.:-]+)?$`, so room version 12 ids without a server part pass; egress 443 only) is in review in thalovant-api#467, hidden until its first version is published.
 
 ## Tell people about encrypted rooms
 
@@ -25,10 +24,11 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review: reply-off-the-bus-thre
 - **Problem:** AUDIT.md section 5.
 - **Done:** `speak` queues, one sender thread posts (AUDIT.md R4).
 
-## Check the homeserver URL where it is entered
+## Check the homeserver URL where it is entered (in review in the platform API, 2026-11-03)
 
 - **Problem:** AUDIT.md section 19 and R7: the homeserver URL is whatever the customer types. The bridge refuses credentials, queries and fragments and warns on plain `http://`, but only once the pod starts, and it cannot tell a public homeserver from an internal address.
 - **Proposal:** the platform API accepts only `https://` URLs with a public host name, and the bridge's egress policy allows 443 to public addresses only (no cluster, node, link-local or metadata ranges).
+- **State:** the egress policy already allows TCP 443 to public addresses only. The API check (https, port 443 only, a host name that resolves to public addresses only, checked on create and on every settings edit) is part of thalovant-api#467, in review.
 - **Impact:** high for a managed service; small change in the API and the policy.
 
 ## A termination reason for a wrong homeserver
@@ -43,11 +43,10 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review: reply-off-the-bus-thre
 - **Proposal:** a second homeserver in `tests/integration/live_matrix.py` (Synapse with a generated config and a registration shared secret), selected by an option, run in CI as a matrix.
 - **Impact:** medium; Synapse is what most people run.
 
-## Persist the RSA identity key
+## Persist the RSA identity key (done in the operator, 2026-11-03)
 
 - **Problem:** AUDIT.md section 9 (all bridges).
-- **Proposal:** the operator mounts `unnamed-node.pem` from the credentials Secret the way it mounts the Noise key.
-- **Impact:** low; removes a hub warning per restart and keeps INTERCOM usable.
+- **Done:** hivemind-k8s-operator#122 mounts `unnamed-node.pem` read-only from the credentials Secret (`rsaKey`), the way it mounts the Noise key.
 
 ## Reproducible images
 
