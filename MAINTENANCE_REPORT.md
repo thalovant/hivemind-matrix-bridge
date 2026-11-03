@@ -1,8 +1,15 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit review-body follow-up after PR #2: clamp retry_after_ms from the answer body.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Docs refresh: platform state of the suggestions and AUDIT section 9.
 
 # Maintenance report: hivemind-matrix-bridge
 
 
+
+## 2026-11-03: docs refresh against the platform's state
+
+- **What:** QUICK_FACTS gains the RSA identity path and FAQ says the managed deployment mounts both identity keys (CodeRabbit on PR #4: every change updates both). AUDIT.md section 9 and SUGGESTIONS.md "Persist the RSA identity key" marked fixed by the operator (hivemind-k8s-operator#122 mounts a stable `unnamed-node.pem`); "Platform integration" marked done by the operator's generic bridge spec (hivemind-k8s-operator#121), with the Matrix connector entry (env names, room id pattern) in review in thalovant-api#467; "Check the homeserver URL where it is entered" points at the same API change and the 443-public-only egress policy. No code change.
+- **Checked:** the env names and the room pattern against thalovant-api#467's `catalog/catalog.yaml` (`chat_apps: matrix`) and `operator_lib/bridge_manager.py` on hivemind-k8s-operator `main` `0072076`; QUICK_FACTS (version `0.3.0a1`, entry point, 178 tests) still matches the code.
+- **Verification:** `python -m pytest tests -q`: 178 passed (Python 3.13).
+- **Transparency report:** AI model Claude Opus 5.5 (`claude-opus-5-5`) in Claude Code; compared these docs with the operator and API sources and edited five files; no human review yet.
 
 ## 2026-11-03: CodeRabbit review-body follow-up (after pull request #2)
 

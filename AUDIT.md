@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit review-body follow-up: retry_after_ms from the answer body clamped (R6).
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Section 9 fixed where the operator runs the bridge (stable RSA identity mounted from the credentials Secret).
 
 # Audit: hivemind-matrix-bridge
 
@@ -46,10 +46,11 @@ Evidence: `python -m pytest tests -q` (125 passed, 2026-11-02, Python 3.12), a m
 - **Where:** `_strip_mentions` (`hm_matrix_bridge/__init__.py:614`).
 - **Finding:** a display name that is a common word ("Assistant") counts as a mention wherever it appears as a whole word. Pills (`m.mentions`) are exact.
 
-## 9. The RSA identity key is new on every pod start
+## 9. The RSA identity key is new on every pod start (fixed in the managed deployment, 2026-11-03)
 
 - **Where:** hivemind-bus-client writes `unnamed-node.pem` beside the Noise key in the emptyDir (seen in the live run's listing).
 - **Finding:** the hub keeps the first RSA key it pinned and logs a mismatch on later HELLOs; it does not refuse the connection, and bridges send no INTERCOM messages that would need it. The live run's restart reconnects and answers. Same for the Telegram and Discord forks.
+- **Fixed where the operator runs the bridge:** hivemind-k8s-operator#122 makes an `rsaKey` once in the bridge's credentials Secret and mounts it read-only at `/home/bridge/.config/hivemind/unnamed-node.pem`, so every start presents the same key. The directory itself stays writable (`_identity.json`, the PSK cache). Elsewhere (a plain `docker run`), keep the whole directory across restarts, as for the Noise key. No change in this repository.
 
 ## 10. The fallback reply is English only
 

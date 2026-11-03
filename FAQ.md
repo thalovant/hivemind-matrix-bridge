@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: how a long reply is split.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: The managed deployment mounts both identity keys (Noise and RSA).
 
 # FAQ: hivemind-matrix-bridge
 
@@ -40,7 +40,7 @@ That the HiveMind session is live (the client's `handshake_event`), the first sy
 
 ## Why must `/home/bridge/.config/hivemind` persist, or the Noise key be mounted?
 
-The hub pins the bridge's Noise static key (`unnamed-node_noise.key`). A new key on every start is refused. The live test (`docs/live-test.md`) checks the hub pinned the mounted key and accepts it again after a restart.
+The hub pins the bridge's Noise static key (`unnamed-node_noise.key`). A new key on every start is refused. The live test (`docs/live-test.md`) checks the hub pinned the mounted key and accepts it again after a restart. The RSA identity beside it (`unnamed-node.pem`) is not refused when it changes, but the hub warns on each new one. Where the operator runs the bridge, both come from the bridge's credentials Secret, mounted read-only (hivemind-k8s-operator#122); elsewhere, keep the directory.
 
 ## Can I use a password instead of a token?
 

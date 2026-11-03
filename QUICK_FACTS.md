@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit review-body follow-up: test count.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: RSA identity path, and both identity keys mounted where the operator runs the bridge.
 
 # Quick facts: hivemind-matrix-bridge
 
@@ -14,6 +14,7 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit review-body follow-
 | Image | `ghcr.io/thalovant/hivemind-matrix-bridge` (`:sha-<commit>` and `:latest`, signed by digest with cosign keyless) |
 | Image user | `bridge`, uid/gid 10001, `HOME=/home/bridge`; writes only `/home/bridge/.config/hivemind` and `/tmp` |
 | Noise key path | `/home/bridge/.config/hivemind/unnamed-node_noise.key` (hex X25519 private key) |
+| RSA identity path | `/home/bridge/.config/hivemind/unnamed-node.pem`; where the operator runs the bridge, both keys come read-only from its credentials Secret (hivemind-k8s-operator#122) |
 | Default branch | `main` (upstream: `JarbasHiveMind/HiveMind-matrix-bridge`, branch `dev`) |
 | CI | `.github/workflows/ci.yml`: tests on Python 3.12 and 3.14, ruff `F,E9`, image smoke tests (incl. read-only root and `token_rejected`), live run, publish on `main` |
 | Tests | `tests/`, 178 tests (`python -m pytest tests -q`); live run `tests/integration/live_matrix.py` (Conduit 0.10.9 + hivemind-core) |
