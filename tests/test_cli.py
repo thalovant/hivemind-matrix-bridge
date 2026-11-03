@@ -1,0 +1,164 @@
+"""The CLI resolves its settings from flags, the environment and secret files.
+
+A secret on the command line is readable by every process on the host
+(``ps``, ``/proc/<pid>/cmdline``), so a container must be able to start the
+bridge with no secret in its arguments at all.
+"""
+import pytest
+
+from hm_matrix_bridge.__main__ import resolve_options
+
+BASE = {"MATRIX_HOMESERVER": "https://matrix.example.org", "MATRIX_ACCESS_TOKEN": "tok"}
+
+
+def test_everything_can_come_from_the_environment():
+    options = resolve_options([], {
+        "MATRIX_HOMESERVER": "https://matrix.example.org/",
+        "MATRIX_USER_ID": "@hive:example.org",
+        "MATRIX_ACCESS_TOKEN": "tok",
+        "MATRIX_ALLOWED_ROOMS": "!abc:example.org, !def:example.org !v12roomwithnoserver",
+        "MATRIX_REQUIRE_MENTION": "false",
+        "MATRIX_SESSION_SCOPE": "chat",
+        "MATRIX_DM_POLICY": "allow",
+        "BRIDGE_HEALTH_PORT": "8080",
+        "HIVEMIND_ACCESS_KEY": "key",
+        "HIVEMIND_PASSWORD": "pw",
+        "HIVEMIND_HOST": "hub.local",
+        "HIVEMIND_PORT": "6000",
+        "HIVEMIND_SITE_ID": "kitchen",
+        "HIVEMIND_SELF_SIGNED": "true",
+        "HIVEMIND_LANG": "fr-fr",
+    })
+    assert options == {
+        "homeserver": "https://matrix.example.org",
+        "access_token": "tok",
+        "user_id": "@hive:example.org",
+        "key": "key",
+        "password": "pw",
+        "host": "ws://hub.local",
+        "port": 6000,
+        "self_signed": True,
+        "lang": "fr-fr",
+        "site_id": "kitchen",
+        "allowed_rooms": ["!abc:example.org", "!def:example.org", "!v12roomwithnoserver"],
+        "require_mention": False,
+        "session_scope": "chat",
+        "dm_policy": "allow",
+        "health_port": 8080,
+    }
+
+
+def test_defaults_when_only_the_homeserver_and_token_are_given():
+    options = resolve_options([], BASE)
+    assert options["port"] == 5678
+    assert options["site_id"] == "matrix"
+    assert options["lang"] == "en-us"
+    assert options["self_signed"] is False
+    assert options["allowed_rooms"] is None
+    assert options["require_mention"] is True
+    assert options["session_scope"] == "person"
+    assert options["dm_policy"] == "auto"
+    assert options["health_port"] is None
+    assert options["host"] is None
+    assert options["user_id"] is None
+
+
+def test_secrets_can_come_from_files(tmp_path):
+    token = tmp_path / "token"
+    token.write_text("tok-from-file\n", encoding="utf-8")
+    key = tmp_path / "key"
+    key.write_text("key-from-file", encoding="utf-8")
+    password = tmp_path / "password"
+    password.write_text("pw-from-file", encoding="utf-8")
+    options = resolve_options([], {
+        "MATRIX_HOMESERVER": "https://matrix.example.org",
+        "MATRIX_ACCESS_TOKEN_FILE": str(token),
+        "HIVEMIND_ACCESS_KEY_FILE": str(key),
+        "HIVEMIND_PASSWORD_FILE": str(password),
+    })
+    assert options["access_token"] == "tok-from-file"
+    assert options["key"] == "key-from-file"
+    assert options["password"] == "pw-from-file"
+
+
+def test_a_flag_wins_over_the_environment_and_the_environment_over_a_file(tmp_path):
+    token = tmp_path / "token"
+    token.write_text("from-file", encoding="utf-8")
+    environ = {"MATRIX_HOMESERVER": "https://matrix.example.org",
+               "MATRIX_ACCESS_TOKEN": "from-env", "MATRIX_ACCESS_TOKEN_FILE": str(token)}
+    assert resolve_options(["--access-token", "from-flag"], environ)["access_token"] == "from-flag"
+    assert resolve_options([], environ)["access_token"] == "from-env"
+    del environ["MATRIX_ACCESS_TOKEN"]
+    assert resolve_options([], environ)["access_token"] == "from-file"
+
+
+def test_flags_cover_every_matrix_setting():
+    options = resolve_options([
+        "--homeserver", "https://hs.example.org", "--access-token", "t",
+        "--user-id", "@bot:hs.example.org", "--allowed-room", "!a:hs.example.org",
+        "--allowed-room", "!b:hs.example.org,!c:hs.example.org", "--no-require-mention",
+        "--session-scope", "chat", "--dm-policy", "deny", "--health-port", "9000",
+    ], {})
+    assert options["allowed_rooms"] == ["!a:hs.example.org", "!b:hs.example.org", "!c:hs.example.org"]
+    assert options["require_mention"] is False
+    assert (options["session_scope"], options["dm_policy"], options["health_port"]) == ("chat", "deny", 9000)
+
+
+def test_the_homeserver_and_the_token_are_required(capsys):
+    with pytest.raises(SystemExit):
+        resolve_options([], {"MATRIX_ACCESS_TOKEN": "tok"})
+    assert "MATRIX_HOMESERVER" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        resolve_options([], {"MATRIX_HOMESERVER": "https://matrix.example.org"})
+    assert "MATRIX_ACCESS_TOKEN" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("homeserver", ["matrix.example.org", "ftp://matrix.example.org", "https://"])
+def test_the_homeserver_must_be_a_url(homeserver):
+    with pytest.raises(SystemExit):
+        resolve_options([], {**BASE, "MATRIX_HOMESERVER": homeserver})
+
+
+def test_an_unreadable_secret_file_names_the_variable(tmp_path):
+    with pytest.raises(SystemExit) as stopped:
+        resolve_options([], {"MATRIX_HOMESERVER": "https://matrix.example.org",
+                             "MATRIX_ACCESS_TOKEN_FILE": str(tmp_path / "absent")})
+    assert "MATRIX_ACCESS_TOKEN_FILE" in str(stopped.value)
+
+
+@pytest.mark.parametrize("rooms", ["#general:example.org", "general", "!a:example.org;!b"])
+def test_the_allow_list_takes_room_ids_only(rooms, capsys):
+    with pytest.raises(SystemExit):
+        resolve_options([], {**BASE, "MATRIX_ALLOWED_ROOMS": rooms})
+    assert "MATRIX_ALLOWED_ROOMS" in capsys.readouterr().err
+
+
+def test_an_alias_is_refused_with_a_hint(capsys):
+    with pytest.raises(SystemExit):
+        resolve_options([], {**BASE, "MATRIX_ALLOWED_ROOMS": "#general:example.org"})
+    assert "alias" in capsys.readouterr().err
+
+
+def test_a_malformed_user_id_is_refused():
+    with pytest.raises(SystemExit):
+        resolve_options([], {**BASE, "MATRIX_USER_ID": "hive"})
+
+
+@pytest.mark.parametrize("variable,value", [
+    ("MATRIX_SESSION_SCOPE", "room"),
+    ("MATRIX_DM_POLICY", "sometimes"),
+    ("MATRIX_REQUIRE_MENTION", "maybe"),
+    ("HIVEMIND_PORT", "http"),
+    ("BRIDGE_HEALTH_PORT", "eighty"),
+])
+def test_an_impossible_value_is_a_usage_error(variable, value):
+    with pytest.raises(SystemExit):
+        resolve_options([], {**BASE, variable: value})
+
+
+def test_mention_gating_is_on_by_default_and_can_be_turned_off():
+    assert resolve_options([], BASE)["require_mention"] is True
+    assert resolve_options(["--no-require-mention"], BASE)["require_mention"] is False
+    assert resolve_options([], {**BASE, "MATRIX_REQUIRE_MENTION": "false"})["require_mention"] is False
+    assert resolve_options([], {**BASE, "MATRIX_REQUIRE_MENTION": "true"})["require_mention"] is True
+
