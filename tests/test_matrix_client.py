@@ -193,3 +193,24 @@ def test_an_odd_retry_after_never_raises_or_waits_a_negative_time(hs, answer):
     assert len(hs.requests) == matrix_module.MAX_SEND_ATTEMPTS
     assert waits == [matrix_module.DEFAULT_RATE_LIMIT_WAIT] * (matrix_module.MAX_SEND_ATTEMPTS - 1)
     assert refused.value.retry_after_ms is None
+
+
+@pytest.mark.parametrize("retry_after_ms", [10 ** 400, 10 ** 13])
+def test_a_huge_retry_after_ms_in_the_body_is_clamped_not_fatal(hs, retry_after_ms):
+    """A JSON integer with hundreds of digits decodes fine; ``/ 1000.0`` then
+    raised OverflowError in the sync loop's backoff, which nothing caught."""
+    import hm_matrix_bridge as bridge_module
+
+    hs.route("GET", "/sync", (429, {"errcode": "M_LIMIT_EXCEEDED",
+                                    "retry_after_ms": retry_after_ms}))
+    client, _ = client_for(hs)
+    with pytest.raises(MatrixError) as refused:
+        client.sync(timeout_ms=0)
+    assert refused.value.retry_after_ms == matrix_module.MAX_RETRY_AFTER_MS
+    assert bridge_module.HiveMindMatrixBridge._backoff(refused.value, 1) == \
+        bridge_module.MAX_SYNC_BACKOFF
+    # the send path: over MAX_RATE_LIMIT_WAIT, so the send gives up, without an OverflowError
+    hs.route("PUT", r"/rooms/.+", (429, {"errcode": "M_LIMIT_EXCEEDED",
+                                         "retry_after_ms": retry_after_ms}))
+    with pytest.raises(MatrixError):
+        client.send_message(ROOM, {"msgtype": "m.notice", "body": "hi"})

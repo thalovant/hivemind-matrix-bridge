@@ -1,4 +1,4 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: split rule, test count.
+Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit review-body follow-up: test count.
 
 # Quick facts: hivemind-matrix-bridge
 
@@ -16,7 +16,7 @@ Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: split rul
 | Noise key path | `/home/bridge/.config/hivemind/unnamed-node_noise.key` (hex X25519 private key) |
 | Default branch | `main` (upstream: `JarbasHiveMind/HiveMind-matrix-bridge`, branch `dev`) |
 | CI | `.github/workflows/ci.yml`: tests on Python 3.12 and 3.14, ruff `F,E9`, image smoke tests (incl. read-only root and `token_rejected`), live run, publish on `main` |
-| Tests | `tests/`, 176 tests (`python -m pytest tests -q`); live run `tests/integration/live_matrix.py` (Conduit 0.10.9 + hivemind-core) |
+| Tests | `tests/`, 178 tests (`python -m pytest tests -q`); live run `tests/integration/live_matrix.py` (Conduit 0.10.9 + hivemind-core) |
 | HiveMind message types | sends `recognizer_loop:utterance`; handles `speak`, `hive.complete_intent_failure` |
 | Hub session id | `matrix-<room_id>-<user_id>` (`person`, default) or `matrix-<room_id>` (`chat`) |
 | Utterance context | `room_id`, `thread_id` (in a thread), `user.matrix_user_id`, `session.session_id` |
