@@ -1,32 +1,39 @@
-# Grounded in the verified ser9 systemd unit (hivemind-bridge-matrix.service).
-#
-# IMPORTANT / TODO: unlike the other bridges, `HiveMind-matrix run --help`
-# takes NO --host/--port/--access-key/--password flags at all — it reads a
-# pre-paired identity from $XDG_CONFIG_HOME/hivemind/_identity.json
-# (RSA keypair + access_key/password, produced once via a pairing flow).
-# The shared bootstrap in this stack only mints plain access-key/password
-# credentials (hivemind-core add-client) — it does NOT yet generate this
-# identity.json's RSA keypair, so the matrix bridge is NOT auto-paired by
-# `hub-init.sh` today. Until that's added, pair manually:
-#   docker compose --profile matrix run --rm matrix-bridge \
-#     HiveMind-matrix register   # (or equivalent pairing command)
-# and the result will persist in the `matrix-bridge-config` volume.
-# TODO / real finding: this bridge's own requirements.txt pins
-# "hivemind-bus-client<1.0.0", conflicting with the 1.0.13a1 floor used
-# elsewhere in this stack. Installed as-is (its own floor) rather than
-# forcing a newer client and breaking the build — needs an upstream floor
-# bump + relock before this bridge runs against the current client line.
 FROM python:3.14-slim
 
-ENV PIP_NO_CACHE_DIR=1
-RUN pip install --no-cache-dir --pre --upgrade "hivemind-matrix-bridge"
+# Install from a copy of the package only, then drop the copy: nothing but
+# the installed bridge is left in the image.
+COPY pyproject.toml README.md LICENSE /src/
+COPY hm_matrix_bridge /src/hm_matrix_bridge
 
-ENV XDG_CONFIG_HOME=/config \
-    MATRIX_BOTNAME=hivemind-bot \
-    MATRIX_ROOM="#hivemind:localhost"
+# The floors name alphas (hivemind-bus-client>=1.0.16a1, ovos-bus-client>=2.9.1a1);
+# upgrade the client first so a cached base layer never holds an older one.
+RUN pip install --no-cache-dir --upgrade "hivemind-bus-client>=1.0.16a1" \
+    && pip install --no-cache-dir /src \
+    && rm -rf /src
 
-ENTRYPOINT ["sh", "-c", "exec HiveMind-matrix run \
-  --botname \"$MATRIX_BOTNAME\" \
-  --matrixtoken \"$MATRIX_TOKEN\" \
-  --matrixhost \"$MATRIX_HOMESERVER\" \
-  --room \"$MATRIX_ROOM\""]
+# The bridge reads every setting from the environment (MATRIX_HOMESERVER,
+# MATRIX_ACCESS_TOKEN_FILE, HIVEMIND_ACCESS_KEY_FILE, ...), or a secret from
+# the file named by <VARIABLE>_FILE, so no secret is ever passed on the
+# command line where other processes can read it. Nothing secret is baked
+# into the image.
+ENV HOME=/home/bridge \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HIVEMIND_HOST=ws://127.0.0.1 \
+    HIVEMIND_PORT=5678 \
+    HIVEMIND_SITE_ID=matrix \
+    HIVEMIND_LANG=en-us
+
+# An unprivileged user. Its ~/.config/hivemind holds the HiveMind identity and
+# the Noise static key (unnamed-node_noise.key), which the hub pins: mount a
+# volume there, or the key from a secret, so it survives restarts. That
+# directory and /tmp are the only places the bridge writes, so the root
+# filesystem can be read-only.
+RUN groupadd --gid 10001 bridge \
+    && useradd --create-home --uid 10001 --gid 10001 bridge \
+    && mkdir -p /home/bridge/.config/hivemind \
+    && chown -R bridge:bridge /home/bridge
+USER bridge
+WORKDIR /home/bridge
+
+ENTRYPOINT ["hivemind-matrix-bridge"]

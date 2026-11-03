@@ -1,98 +1,61 @@
+Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Rewritten for the managed bridge: access token, room ids, unencrypted rooms, hub registration, image.
+
 # Setup walkthrough
 
-This walkthrough takes you from nothing to a working Matrix chatbot backed by a HiveMind hub.
-
-## How the bridge fits together
-
-The bridge is a HiveMind satellite. It holds two connections at once:
-
-- **To Matrix**: it logs in with a bot access token, joins a room, and listens for messages.
-- **To the HiveMind hub**: it authenticates with a HiveMind access key and password, then exchanges encrypted protocol messages.
-
-When a room message mentions the bot, the bridge sends a `recognizer_loop:utterance` to the hub. It waits for a `speak` reply, then posts the reply back to the room.
-
 ```
-Matrix room  ⇄  bridge  ⇄  hivemind-core hub  ⇄  OVOS pipeline / skills
+Matrix user  ⇄  homeserver  ⇄  hivemind-matrix-bridge  ⇄  HiveMind hub  ⇄  OVOS skills
 ```
 
-## Step 1: stand up a HiveMind hub
+## 1. A Matrix account for the bot
 
-Install and run [hivemind-core](https://github.com/JarbasHiveMind/HiveMind-core) on a machine the bridge can reach:
+Register an account for the bot on any homeserver (`@hivebot:example.org`), and give it a display name: people mention the bot by it.
+
+## 2. An access token
+
+The bridge logs in with an access token, never a password. Get one by logging in once:
 
 ```bash
-pip install hivemind-core
-hivemind-core listen
+curl -s -X POST https://matrix.example.org/_matrix/client/v3/login \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"hivebot"},"password":"...","initial_device_display_name":"hivemind-matrix-bridge"}'
 ```
 
-By default the hub listens on port `5678`.
+Keep `access_token` from the answer in a file (that is what `MATRIX_ACCESS_TOKEN_FILE` reads). Do not log the session out: that revokes the token, and the bridge then stops with `token_rejected`. In Element, *Settings → Help & About → Access Token* shows the token of that Element session, which ends when Element logs out; a dedicated login is better.
 
-## Step 2: register the bridge as a client
+## 3. Rooms without encryption
 
-On the hub machine, issue credentials for the bridge:
+The bridge cannot read or answer in end-to-end encrypted rooms. Element turns encryption on by default for private rooms and direct messages, and it cannot be turned off later. So:
+
+- create the room with *Enable end-to-end encryption* switched off (or make it public), then invite the bot;
+- a DM opened from Element is encrypted, so the bot will not answer there. A two-person room created unencrypted works, and counts as a DM for the mention rule (no mention needed).
+
+The bridge logs an encrypted room once (`room !id is end-to-end encrypted; ...`) and stays silent there.
+
+## 4. The room ids
+
+`MATRIX_ALLOWED_ROOMS` takes room ids, not aliases: Element shows them under *Room settings → Advanced* (`!abcdef:example.org`, or `!abcdef` for room version 12). Invite the bot to each; it accepts invites only to listed rooms.
+
+## 5. Register the bridge on the hub
 
 ```bash
-hivemind-core add-client --name matrix-bridge \
-  --access-key "your-access-key" --password "your-password"
-```
-
-Keep the access key and password. The bridge authenticates with them. List existing clients with `hivemind-core list-clients`.
-
-A freshly registered client can connect, but the hub will not act on anything it sends until you whitelist its message types. This step is easy to miss, and a skipped one is the most common reason a bridge "connects but does nothing":
-
-```bash
+hivemind-core add-client --name matrix-bridge --access-key "<key>" --password "<password>"
 hivemind-core allow-msg recognizer_loop:utterance matrix-bridge
-hivemind-core allow-msg speak matrix-bridge
 ```
 
-The first line lets the bridge send utterances into the hub. The second lets the hub's spoken replies come back out to the bridge. Without both, the bridge sits there connected and silent.
+A new client can send nothing until it is allowed `recognizer_loop:utterance`; a bridge that connects and never answers usually lacks this.
 
-## Step 3: create a Matrix bot account
+## 6. Run it
 
-1. Register a Matrix account for the bot on any homeserver (`matrix.org` or self-hosted).
-2. Log in once with a client such as [Element](https://element.io).
-3. Copy the account's **access token** (Element: *Settings → Help & About → Access Token*).
-4. Create or pick a room, note its alias (for example `#hivemind-bots:matrix.org`), and invite the bot account into it.
+See the [README](../README.md#run-it) for the `docker run` line and [configuration.md](configuration.md) for every setting. `/readyz` turns 200 once the hub session is up and the first sync is done.
 
-## Step 4: install the bridge
+## 7. Check the round trip
 
-```bash
-pip install git+https://github.com/JarbasHiveMind/HiveMind-matrix-bridge
-```
+In a listed room with at least two other people, send `HiveBot: what time is it` (with the mention pill). The bot answers in the room. A message without the mention gets no answer; in a two-member room every message does.
 
-## Step 5: provide the HiveMind credentials
+## Troubleshooting
 
-Either store an identity once:
-
-```bash
-hivemind-client set-identity \
-  --key "your-access-key" \
-  --password "your-password" \
-  --host "ws://192.168.1.100"
-```
-
-or pass `--key/--password/--host` on each run.
-
-## Step 6: run
-
-```bash
-HiveMind-matrix run \
-  --botname thehivebot \
-  --matrixtoken "syt_your_access_token" \
-  --matrixhost "https://matrix.org" \
-  --room "#hivemind-bots:matrix.org"
-```
-
-You should see the bridge log `connected to Matrix` and `connected to HiveMind`.
-
-## Step 7: talk to it
-
-In the room, mention the bot:
-
-```
-thehivebot what is the weather?
-```
-
-The bridge forwards the text after the mention to the hub and posts the spoken answer back.
-
----
-[Home](../README.md) · [Operator setup →](operator-setup.md)
+- **Exit status 3, `token_rejected`**: the homeserver refused the token, or it belongs to another account than `MATRIX_USER_ID`. Make a new token (step 2).
+- **Never ready, log says `cannot reach the Matrix homeserver`**: `MATRIX_HOMESERVER` must be the client API URL the bridge can reach (outbound HTTPS).
+- **Bot never joins**: the room id is not on `MATRIX_ALLOWED_ROOMS`, or it is an alias.
+- **Bot joined but is silent**: the room is encrypted (see the log), the message did not mention the bot, or the hub has not allowed `recognizer_loop:utterance`.
+- **Hub refuses after a reinstall**: the hub pinned the bridge's Noise key; keep `/home/bridge/.config/hivemind` (or the mounted key) across restarts, or reset the pin on the hub.

@@ -1,125 +1,77 @@
+Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Rewritten for the managed multi-room bridge: environment settings, allow-list, DM policy, encryption limit, image.
+
 # HiveMind Matrix Bridge
 
-Relay a [Matrix](https://matrix.org) chatroom to a [HiveMind](https://github.com/JarbasHiveMind/HiveMind-core) hub.
+Answer [Matrix](https://matrix.org) rooms from a [HiveMind](https://github.com/JarbasHiveMind/HiveMind-core) hub.
 
-The bridge is a HiveMind **satellite**. Its input and output are a Matrix room instead of a microphone. Messages that mention the bot go to the hub as utterances. The hub's spoken reply posts back into the room. This turns any HiveMind hub, and the OVOS skills behind it, into a Matrix chatbot.
+The bridge is a HiveMind **satellite** whose input and output are a Matrix bot account instead of a microphone. A message addressed to the bot becomes an utterance on the hub; the hub's spoken reply is posted back into the same room.
 
 ```
-Matrix room  ⇄  HiveMind-matrix-bridge  ⇄  HiveMind hub (hivemind-core)  ⇄  OVOS skills
+Matrix rooms  ⇄  homeserver  ⇄  hivemind-matrix-bridge  ⇄  HiveMind hub  ⇄  OVOS skills
 ```
 
-## Prerequisites
+## What it answers
 
-- A running **HiveMind hub** ([hivemind-core](https://github.com/JarbasHiveMind/HiveMind-core)) you can reach over the network.
-- A **HiveMind access key and password** for this bridge, issued by the hub with `hivemind-core add-client` (see [Quickstart](#quickstart)).
-- A **Matrix account** for the bot and an **access token** for it. Any homeserver works (`matrix.org` or self-hosted). Create the account, log in once, and copy its access token (in Element: *Settings → Help & About → Access Token*).
-- The room alias the bot should join, for example `#hivemind-bots:matrix.org`. Invite the bot account to that room.
+- Rooms on `MATRIX_ALLOWED_ROOMS` (room ids). Without a list, every room the bot is in.
+- Invites are accepted only to listed rooms (to any room without a list). Other invites are left pending.
+- A **direct message** is a room with exactly two joined members, the bot and one person. One that is not on the list follows `MATRIX_DM_POLICY`: `auto` (default) refuses it when rooms are listed, `allow`, or `deny`.
+- In a room with more people, only messages that **mention the bot** (a pill, its user id or its display name) or **reply to one of its messages**. The mention is removed before the text goes to the hub. `MATRIX_REQUIRE_MENTION=false` answers every message.
+- **End-to-end encrypted rooms are not supported.** The bridge keeps no device keys, so it never answers in an encrypted room and logs the room once. Create rooms for the bot with encryption off (it cannot be turned off later).
+- Nothing from before the bridge started, or from before the bot joined a room, is answered.
 
-## Install
+## Run it
+
+The image reads every setting from the environment and every secret from a file:
 
 ```bash
-pip install git+https://github.com/JarbasHiveMind/HiveMind-matrix-bridge
+docker run --read-only --tmpfs /tmp \
+  -v bridge-identity:/home/bridge/.config/hivemind \
+  -v "$PWD/secrets:/run/secrets:ro" \
+  -e MATRIX_HOMESERVER=https://matrix.example.org \
+  -e MATRIX_USER_ID=@hivebot:example.org \
+  -e MATRIX_ACCESS_TOKEN_FILE=/run/secrets/matrix-token \
+  -e MATRIX_ALLOWED_ROOMS='!abcdefghijklmnop:example.org' \
+  -e HIVEMIND_HOST=ws://hub.example.org -e HIVEMIND_PORT=5678 \
+  -e HIVEMIND_ACCESS_KEY_FILE=/run/secrets/hivemind-key \
+  -e HIVEMIND_PASSWORD_FILE=/run/secrets/hivemind-password \
+  -e BRIDGE_HEALTH_PORT=8080 \
+  ghcr.io/thalovant/hivemind-matrix-bridge:latest
 ```
 
-Or from a checkout:
+`/home/bridge/.config/hivemind` holds the HiveMind identity and the Noise key the hub pins: keep it (or mount the key) across restarts.
 
-```bash
-git clone https://github.com/JarbasHiveMind/HiveMind-matrix-bridge
-cd HiveMind-matrix-bridge
-pip install .
-```
+From a checkout: `pip install .` installs the `hivemind-matrix-bridge` command, which takes the same settings as flags (`hivemind-matrix-bridge --help`).
 
-This installs the `HiveMind-matrix` console command.
+## Settings
 
-## Quickstart
-
-**1. Register the bridge on the hub** (run where `hivemind-core` is installed):
-
-```bash
-hivemind-core add-client --name matrix-bridge \
-  --access-key "your-access-key" --password "your-password"
-```
-
-Note the access key and password. The bridge needs them to authenticate.
-
-A new client is registered but mute: the hub denies every message type until you whitelist it. Run this too, or the bridge will connect and never do anything:
-
-```bash
-hivemind-core allow-msg recognizer_loop:utterance matrix-bridge
-hivemind-core allow-msg speak matrix-bridge
-```
-
-If you are running more than one bridge on the same host (Matrix, Mattermost, DeltaChat, HackChat side by side), give each one its own `hivemind-client set-identity` credentials and, if applicable, its own config directory. Bridges that share an identity share a Noise session pin, and the hub will treat reconnects from either one as the same client, which breaks encryption for both.
-
-**2. Store the HiveMind credentials** so they are read automatically:
-
-```bash
-hivemind-client set-identity \
-  --key "your-access-key" \
-  --password "your-password" \
-  --host "ws://192.168.1.100"
-```
-
-`set-identity` ships with `hivemind-bus-client`, a dependency of this bridge. You can instead pass `--key/--password/--host` on every run, without storing an identity.
-
-**3. Run the bridge:**
-
-```bash
-HiveMind-matrix run \
-  --botname thehivebot \
-  --matrixtoken "syt_your_access_token" \
-  --matrixhost "https://matrix.org" \
-  --room "#hivemind-bots:matrix.org"
-```
-
-**4. Send a message.** In the joined room, mention the bot:
-
-```
-thehivebot what time is it?
-```
-
-The bridge strips the mention, forwards `what time is it?` to the hub, waits for the hub's `speak` reply, and posts it back to the room.
-
-## Configuration
-
-`HiveMind-matrix run` options:
-
-| Option | Description | Default |
+| Variable | Flag | Default |
 | --- | --- | --- |
-| `--botname` | Mention prefix that triggers the bot. If omitted, the bridge answers every message in the room. | none |
-| `--matrixtoken` | Matrix access token for the bot account | none |
-| `--matrixhost` | Matrix homeserver URL | `https://matrix.org` |
-| `--room` | Room alias to join | `#hivemind-bots:matrix.org` |
-| `--key` | HiveMind access key | read from identity file |
-| `--password` | HiveMind password | read from identity file |
-| `--host` | HiveMind host (a `ws://` prefix is added if no scheme) | read from identity file |
-| `--port` | HiveMind port | `5678` |
+| `MATRIX_HOMESERVER` | `--homeserver` | required: client API URL, `https://...` |
+| `MATRIX_ACCESS_TOKEN` / `MATRIX_ACCESS_TOKEN_FILE` | `--access-token` | required |
+| `MATRIX_USER_ID` | `--user-id` | the token's account; when set, the token must belong to it |
+| `MATRIX_ALLOWED_ROOMS` | `--allowed-room` (repeatable) | none: every room, every invite |
+| `MATRIX_REQUIRE_MENTION` | `--no-require-mention` | `true` |
+| `MATRIX_SESSION_SCOPE` | `--session-scope` | `person` (or `chat`) |
+| `MATRIX_DM_POLICY` | `--dm-policy` | `auto` (or `allow`, `deny`) |
+| `BRIDGE_HEALTH_PORT` | `--health-port` | off |
+| `HIVEMIND_HOST`, `HIVEMIND_PORT` | `--host`, `--port` | identity file, `5678` (image: `ws://127.0.0.1`) |
+| `HIVEMIND_ACCESS_KEY` / `_FILE`, `HIVEMIND_PASSWORD` / `_FILE` | `--access-key`, `--password` | identity file |
+| `HIVEMIND_SITE_ID`, `HIVEMIND_LANG`, `HIVEMIND_SELF_SIGNED` | `--site-id`, `--lang`, `--self-signed` | `matrix`, `en-us`, off |
 
-When `--key/--password/--host` are omitted, the bridge reads them from the stored `NodeIdentity`. If none of the three are available, the bridge exits with an error that points you at `hivemind-client set-identity`.
+A flag wins over its variable, and the variable over its `_FILE`. Details: [docs/configuration.md](docs/configuration.md).
 
-## Troubleshooting
+## Health and exit
 
-- **`NodeIdentity not set`**: run `hivemind-client set-identity`, or pass `--key/--password/--host` explicitly.
-- **Bot ignores messages**: with `--botname` set, the message must contain it exactly, and messages without the mention are dropped by design. Without `--botname`, the bridge answers every message in the room instead.
-- **Reply is the literal text `Error`**: the hub did not return a `speak` within the response timeout (30s). Confirm the hub is reachable, the access key is authorized, and an OVOS pipeline produces spoken answers.
-- **Connection refused or no reply**: verify `--host` and `--port` point at the running hub, and that the bridge's access key is registered (`hivemind-core list-clients`).
-- **Bridge connects but the room never gets a reply**: the client is registered but not whitelisted. Run `hivemind-core allow-msg recognizer_loop:utterance matrix-bridge` and `hivemind-core allow-msg speak matrix-bridge` on the hub.
-- **`invalid api key` at connect time**: the hub rejected the handshake, usually because the bridge (or `hivemind-bus-client`) is older than the hub. Upgrade the bridge.
-- **"reconnect worker already running" in the bridge log**: a known issue in older `hivemind-bus-client` releases when a connection drops and retries overlap. It is fixed upstream; upgrade `hivemind-bus-client` and the bridge.
-- **Handshake fails after the hub was reinstalled or the client's key changed**: the bridge is holding a stale Noise session pin from a previous run. Clear it on the hub with `hivemind-core reset-noise-pin matrix-bridge` and restart the bridge.
+- `GET /healthz`: the process answers. `GET /readyz`: the hub session is live, the first sync is done and the last one succeeded.
+- A refused access token (or a token of another account than `MATRIX_USER_ID`) writes `token_rejected` to `/dev/termination-log` and exits with status 3. A hub that refuses the bridge's credentials exits with status 1.
 
 ## Documentation
 
-- **[Setup walkthrough](docs/setup.md)**: a full path from an empty machine to a running bridge.
-- **[Operator setup](docs/operator-setup.md)**: get the bot's Matrix account and access token (or self-host a homeserver), register the bridge on a HiveMind hub, run it, and check the live end-to-end test.
-- **[Configuration reference](docs/configuration.md)**: every option, credential, and default.
-- **[Examples](docs/examples.md)**: sample runs and embedding the bridge in your own program.
-
-## Related projects
-
-- [HiveMind-core](https://github.com/JarbasHiveMind/HiveMind-core): the HiveMind hub this bridge connects to.
-- [hivemind-bus-client](https://github.com/JarbasHiveMind/hivemind-bus-client): the client library that provides `set-identity` and the HiveMind connection.
+- [docs/index.md](docs/index.md): overview and code map.
+- [docs/setup.md](docs/setup.md): bot account, access token, room ids, hub registration.
+- [docs/configuration.md](docs/configuration.md): every setting and rule.
+- [docs/live-test.md](docs/live-test.md): the run against a real homeserver and hub.
 
 ## License
 
-See [LICENSE](LICENSE).
+Apache-2.0, see [LICENSE](LICENSE).
