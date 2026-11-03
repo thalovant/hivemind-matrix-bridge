@@ -162,3 +162,25 @@ def test_mention_gating_is_on_by_default_and_can_be_turned_off():
     assert resolve_options([], {**BASE, "MATRIX_REQUIRE_MENTION": "false"})["require_mention"] is False
     assert resolve_options([], {**BASE, "MATRIX_REQUIRE_MENTION": "true"})["require_mention"] is True
 
+
+
+def test_sigterm_stops_the_bridge_the_way_ctrl_c_does(monkeypatch):
+    """Kubernetes stops a pod with SIGTERM; Python's default ends it without
+    ``stop()``, so queued replies and the hub session would just vanish."""
+    import signal
+
+    import hm_matrix_bridge.__main__ as cli
+
+    installed = {}
+    monkeypatch.setattr(cli.signal, "signal", lambda signum, handler: installed.update({signum: handler}))
+    stopped = []
+
+    def run(**options):
+        stopped.append("ran")
+        raise KeyboardInterrupt  # what the handler raises in the main thread
+
+    monkeypatch.setattr(cli, "connect_matrix_to_hivemind", run)
+    cli.main(["--homeserver", "https://matrix.example.org", "--access-token", "tok"])
+    assert stopped == ["ran"]
+    with pytest.raises(KeyboardInterrupt):
+        installed[signal.SIGTERM](signal.SIGTERM, None)

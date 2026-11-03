@@ -130,6 +130,7 @@ def test_the_replies_the_bot_sends_count_as_its_own():
 
     bridge, matrix, client = make_bridge({ROOM: 3})
     bridge.handle_speak(Message("speak", {"utterance": "It is noon"}, {"room_id": ROOM}))
+    assert bridge.wait_for_replies(5)
     sent_id = next(key[1] for key, mine in bridge._events.items() if mine)
     assert forwarded(bridge, client, ROOM, reply(ALICE, "thanks, and tomorrow?", sent_id)) \
         == "thanks, and tomorrow?"

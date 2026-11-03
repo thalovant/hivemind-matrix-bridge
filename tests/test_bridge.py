@@ -333,6 +333,7 @@ def test_an_encrypted_event_marks_the_room_encrypted():
 # ----------------------------------------------------------------------
 def speak(bridge, utterance, room_id, **context):
     bridge.handle_speak(Message("speak", {"utterance": utterance}, {"room_id": room_id, **context}))
+    assert bridge.wait_for_replies(5)
 
 
 def test_a_reply_goes_back_to_the_room_and_mentions_nobody():
@@ -374,6 +375,7 @@ def test_a_question_in_a_thread_is_answered_in_the_thread():
 def test_a_complete_intent_failure_gets_the_fallback_line():
     bridge, matrix, _ = make_bridge({ROOM: 3})
     bridge.handle_intent_failure(Message("hive.complete_intent_failure", {}, {"room_id": ROOM}))
+    assert bridge.wait_for_replies(5)
     assert matrix.sent[0][1]["body"] == "I don't know how to answer that"
 
 
@@ -381,6 +383,9 @@ def test_speak_without_a_room_or_text_sends_nothing():
     bridge, matrix, _ = make_bridge({ROOM: 3})
     bridge.handle_speak(Message("speak", {"utterance": "x"}, {}))
     bridge.handle_speak(Message("speak", {"utterance": ""}, {"room_id": ROOM}))
+    bridge.handle_speak(Message("speak", {"utterance": "x"}, {"room_id": ["!a:example.org"]}))
+    bridge.handle_speak(Message("speak", {"utterance": {"x": 1}}, {"room_id": ROOM}))
+    assert bridge.wait_for_replies(5)
     assert matrix.sent == []
 
 

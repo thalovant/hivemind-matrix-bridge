@@ -16,6 +16,8 @@ message) and exits with status 3: retrying cannot fix a bad token.
 import argparse
 import os
 import re
+import signal
+import threading
 from typing import List, Mapping, Optional, Sequence
 from urllib.parse import urlparse
 
@@ -278,8 +280,20 @@ def connect_matrix_to_hivemind(**options) -> HiveMindMatrixBridge:
     return bridge
 
 
+def _stop_on_sigterm(signum, frame) -> None:
+    """Leave on SIGTERM the way Ctrl-C does: through ``start()``'s ``stop()``.
+
+    Kubernetes stops a pod with SIGTERM, and Python's default action ends
+    the process at once: replies already queued would be lost and the hub
+    session dropped without a close.
+    """
+    raise KeyboardInterrupt
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     options = resolve_options(argv)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _stop_on_sigterm)
     LOG.info("bridge starting; press Ctrl-C to stop")
     try:
         connect_matrix_to_hivemind(**options)

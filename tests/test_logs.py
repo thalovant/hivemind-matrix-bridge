@@ -35,9 +35,11 @@ def test_neither_questions_nor_answers_are_logged(monkeypatch):
     bridge.process_sync(joined(ROOM, text(ALICE, SECRET_QUESTION)))
     bridge.process_sync(joined(OTHER, text(ALICE, f"{BOT_NAME} {SECRET_QUESTION}")))
     bridge.handle_speak(Message("speak", {"utterance": SECRET_ANSWER}, {"room_id": DM}))
+    assert bridge.wait_for_replies(5)
     matrix.send_error = MatrixError(500, "M_UNKNOWN")
     bridge.handle_speak(Message("speak", {"utterance": SECRET_ANSWER}, {"room_id": DM}))
     bridge.handle_speak(Message("speak", {"utterance": SECRET_ANSWER}, {"room_id": OTHER}))
+    assert bridge.wait_for_replies(5)
     bridge.process_sync(joined(ROOM, encryption(), text(ALICE, f"{BOT_NAME} {SECRET_QUESTION}")))
 
     assert lines, "the bridge logged nothing; the test would prove nothing"

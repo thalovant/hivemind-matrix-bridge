@@ -40,11 +40,13 @@ bug across HiveMind bridges:
   <client_id>`` (and usually ``speak``); this bridge cannot do that itself.
 """
 import json
+import queue
 import re
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
@@ -92,6 +94,24 @@ MAX_SYNC_BACKOFF = 60.0
 
 #: Remembered event ids (the bot's own messages, and looked-up reply targets).
 EVENT_MEMORY = 1024
+
+#: Replies waiting for the sender thread; one more is dropped, and logged.
+MAX_PENDING_REPLIES = 100
+
+#: Seconds :meth:`HiveMindMatrixBridge.stop` leaves the sender thread to post
+#: the replies already queued.
+STOP_DRAIN_SECONDS = 5.0
+
+#: Largest body of one reply, in UTF-8 bytes. A homeserver refuses an event
+#: over 65536 bytes (``M_TOO_LARGE``), envelope and signatures included, and a
+#: refused reply is lost; this leaves ample room for both.
+MAX_BODY_BYTES = 16000
+
+#: A longer reply is sent as at most this many messages; the rest is cut.
+MAX_REPLY_PARTS = 4
+
+#: Ends a reply that was cut.
+TRUNCATION_MARK = " [...]"
 
 
 def sync_filter(timeline_limit: int) -> str:
@@ -157,6 +177,38 @@ def strip_reply_fallback(body: str) -> str:
     if index < len(lines) and lines[index].strip() == "":
         index += 1
     return "\n".join(lines[index:])
+
+
+def _utf8_prefix(text: str, limit: int) -> str:
+    """The longest start of ``text`` that is at most ``limit`` bytes in UTF-8."""
+    return text.encode("utf-8")[:max(limit, 0)].decode("utf-8", "ignore")
+
+
+def split_reply(text: str, limit: int = MAX_BODY_BYTES,
+                parts: int = MAX_REPLY_PARTS) -> List[str]:
+    """``text`` as message bodies of at most ``limit`` UTF-8 bytes, at most ``parts`` of them.
+
+    Each part ends at its last line break or space when there is one in its
+    second half, never inside a character. What does not fit in ``parts``
+    messages is cut, and the last one ends with :data:`TRUNCATION_MARK`.
+    """
+    chunks: List[str] = []
+    rest = text
+    while rest:
+        if len(rest.encode("utf-8")) <= limit:
+            chunks.append(rest)
+            break
+        if len(chunks) == parts - 1:
+            head = _utf8_prefix(rest, limit - len(TRUNCATION_MARK.encode("utf-8")))
+            chunks.append(head.rstrip() + TRUNCATION_MARK)
+            break
+        head = _utf8_prefix(rest, limit)
+        cut = max(head.rfind("\n"), head.rfind(" "))
+        if cut > len(head) // 2:
+            head = head[:cut]
+        chunks.append(head.rstrip())
+        rest = rest[len(head):].lstrip()
+    return [chunk for chunk in chunks if chunk]
 
 
 class HiveMindMatrixBridge:
@@ -254,6 +306,13 @@ class HiveMindMatrixBridge:
         self._sync_ok = threading.Event()
         self._stop = threading.Event()
         self._token_rejected: Optional[TokenRejected] = None
+
+        # Replies are posted by one sender thread, in order, never on the
+        # HiveMind bus thread (see speak).
+        self._replies: "queue.Queue[Tuple[str, str, Optional[str]]]" = queue.Queue(MAX_PENDING_REPLIES)
+        self._sender: Optional[threading.Thread] = None
+        self._sender_lock = threading.Lock()
+        self._sender_stop = threading.Event()
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -390,6 +449,13 @@ class HiveMindMatrixBridge:
             self.client.close()
         except Exception:
             LOG.exception("error closing HiveMind client")
+        # No new reply can come from the hub now; give the queued ones a moment.
+        self._sender_stop.set()
+        sender = self._sender
+        if sender is not None and sender is not threading.current_thread():
+            sender.join(STOP_DRAIN_SECONDS)
+            if sender.is_alive():
+                LOG.warning(f"stopping with {self._replies.qsize()} replies not sent")
         self._started = False
         self._connected.clear()
         self._sync_ok.clear()
@@ -710,56 +776,118 @@ class HiveMindMatrixBridge:
     # ------------------------------------------------------------------
     def handle_speak(self, message: Message) -> None:
         room_id = message.context.get("room_id")
-        if not room_id:
-            return
         utterance = message.data.get("utterance")
-        if not utterance:
+        if not isinstance(room_id, str) or not room_id:
             return
-        self.speak(utterance, room_id, message.context.get("thread_id"))
+        if not isinstance(utterance, str) or not utterance:
+            return
+        self.speak(utterance, room_id, _event_id(message.context.get("thread_id")))
 
     def handle_intent_failure(self, message: Message) -> None:
         room_id = message.context.get("room_id")
-        if not room_id:
+        if not isinstance(room_id, str) or not room_id:
             return
         LOG.error("complete intent failure")
         self.speak("I don't know how to answer that", room_id,
-                   message.context.get("thread_id"))
+                   _event_id(message.context.get("thread_id")))
 
     def speak(self, text: str, room_id: str, thread_id: Optional[str] = None) -> None:
-        """Post ``text`` to ``room_id`` (in ``thread_id`` when the question was in a thread).
+        """Queue ``text`` for ``room_id`` (in ``thread_id`` when the question was in a thread).
 
-        Runs on the HiveMind bus thread. Only a room the bridge answers in
-        gets a reply, whatever the hub's context names.
+        Called on the HiveMind bus thread, which must not wait for the
+        homeserver: a send is paced, can be rate limited and retried for many
+        seconds, and while a handler holds that thread the hub connection
+        reads nothing (an exception there even drops it). The sender thread
+        posts the reply (:meth:`deliver`). Beyond ``MAX_PENDING_REPLIES``
+        waiting replies, one more is dropped and logged.
         """
+        if self._stop.is_set():
+            LOG.warning(f"stopping; not replying in room {room_id}")
+            return
+        self._ensure_sender()
+        try:
+            self._replies.put_nowait((room_id, text, thread_id))
+        except queue.Full:
+            LOG.warning(f"dropping a reply to room {room_id}: {MAX_PENDING_REPLIES} "
+                        "replies are already waiting")
+
+    def wait_for_replies(self, timeout: float = STOP_DRAIN_SECONDS) -> bool:
+        """Wait until every queued reply was handled; whether that happened within ``timeout``."""
+        deadline = time.monotonic() + timeout
+        with self._replies.all_tasks_done:
+            while self._replies.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._replies.all_tasks_done.wait(remaining)
+        return True
+
+    def _ensure_sender(self) -> None:
+        with self._sender_lock:
+            if self._sender is not None and self._sender.is_alive():
+                return
+            self._sender_stop.clear()
+            self._sender = threading.Thread(target=self._send_replies,
+                                            name="matrix-replies", daemon=True)
+            self._sender.start()
+
+    def _send_replies(self) -> None:
+        """The sender thread: post queued replies in order until stopped and drained."""
+        while True:
+            try:
+                room_id, text, thread_id = self._replies.get(timeout=0.2)
+            except queue.Empty:
+                if self._sender_stop.is_set():
+                    return
+                continue
+            try:
+                self.deliver(text, room_id, thread_id)
+            except Exception as error:  # one reply must not end the sender
+                LOG.error(f"failed to send to Matrix room {room_id} ({type(error).__name__})")
+            finally:
+                self._replies.task_done()
+
+    def deliver(self, text: str, room_id: str, thread_id: Optional[str] = None) -> None:
+        """Post ``text`` to ``room_id`` now, on the calling thread.
+
+        Only a room the bridge answers in gets a reply, whatever the hub's
+        context names. A reply longer than ``MAX_BODY_BYTES`` goes out as
+        several messages (:func:`split_reply`).
+        """
+        if self._token_rejected is not None:
+            return
         state = self.rooms.get(room_id)
         if state is None or state.encrypted or not self.answer_policy(room_id)[0]:
             LOG.warning(f"not replying in room {room_id}: not a room the bridge answers in")
             return
-        content: Dict[str, Any] = {
-            # m.notice is what automated clients send, and what they never
-            # answer (spec: m.notice): two bots in one room cannot loop.
-            "msgtype": "m.notice",
-            "body": text,
-            # mentions nobody: a reply never pings anyone
-            "m.mentions": {},
-        }
-        if thread_id:
-            content["m.relates_to"] = {"rel_type": "m.thread", "event_id": thread_id,
-                                       "is_falling_back": True,
-                                       "m.in_reply_to": {"event_id": thread_id}}
+        parts = split_reply(text)
         # The length, never the text: replies carry what people asked about.
-        LOG.debug(f"sending to Matrix room {room_id}: {len(text)} characters")
-        try:
-            event_id = self.matrix.send_message(room_id, content)
-        except TokenRejected as error:
-            LOG.error(f"the homeserver refused the access token while sending ({_describe(error)})")
-            self._token_rejected = error
-            self._stop.set()
-            return
-        except (MatrixError, requests.RequestException) as error:
-            LOG.error(f"failed to send to Matrix room {room_id} ({_describe(error)})")
-            return
-        self._remember(room_id, event_id, True)
+        LOG.debug(f"sending to Matrix room {room_id}: {len(text)} characters "
+                  f"in {len(parts)} message(s)")
+        for part in parts:
+            content: Dict[str, Any] = {
+                # m.notice is what automated clients send, and what they never
+                # answer (spec: m.notice): two bots in one room cannot loop.
+                "msgtype": "m.notice",
+                "body": part,
+                # mentions nobody: a reply never pings anyone
+                "m.mentions": {},
+            }
+            if thread_id:
+                content["m.relates_to"] = {"rel_type": "m.thread", "event_id": thread_id,
+                                           "is_falling_back": True,
+                                           "m.in_reply_to": {"event_id": thread_id}}
+            try:
+                event_id = self.matrix.send_message(room_id, content)
+            except TokenRejected as error:
+                LOG.error(f"the homeserver refused the access token while sending ({_describe(error)})")
+                self._token_rejected = error
+                self._stop.set()
+                return
+            except (MatrixError, requests.RequestException) as error:
+                LOG.error(f"failed to send to Matrix room {room_id} ({_describe(error)})")
+                return
+            self._remember(room_id, event_id, True)
 
 
 def _section_events(section: Any) -> Iterable[Dict[str, Any]]:
