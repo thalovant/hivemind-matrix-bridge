@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: RSA identity path, and both identity keys mounted where the operator runs the bridge.
-
 # Quick facts: hivemind-matrix-bridge
 
 | Key | Value |

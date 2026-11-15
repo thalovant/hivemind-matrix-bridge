@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: replies ping nobody only on Matrix spec v1.7 and later.
-
 # HiveMind Matrix Bridge
 
 Answer [Matrix](https://matrix.org) rooms from a [HiveMind](https://github.com/JarbasHiveMind/HiveMind-core) hub.
