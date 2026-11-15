@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Live test against Conduit and a real hivemind-core hub added; how to run it and what it proves.
-
 # Live test: a real homeserver and a real hub
 
 `tests/integration/live_matrix.py` runs the bridge **image** against:

@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Review fixes: the reply path (sender thread, m.notice, split replies) and the question cut.
-
 # hivemind-matrix-bridge
 
 A HiveMind bridge for Matrix: a satellite whose input and output are a Matrix bot account instead of a microphone. Messages addressed to the bot in the rooms it answers become `recognizer_loop:utterance` on the hub; `speak` replies go back to the same room.

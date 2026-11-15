@@ -1,6 +1,8 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Section 9 fixed where the operator runs the bridge (stable RSA identity mounted from the credentials Secret).
-
 # Audit: hivemind-matrix-bridge
+
+## 2026-11-15 - Per-file author/date/motive headers
+
+Finding: 12 files carried an author/date/motive header line that the owner has withdrawn. State: fixed in this change (a case-insensitive `git grep` for the header keyword is empty). No code path was touched, so no test result changes; the repository's CI on the pull request is the test of record.
 
 Evidence: `python -m pytest tests -q` (125 passed, 2026-11-02, Python 3.12), a mutation pass (17 behaviours gutted one at a time, each caught by the suite), `tests/integration/live_matrix.py` against Conduit 0.10.9 and hivemind-core 5.3.10a1 (every check passed, transcript in `docs/live-test.md`), and reading the code at commit `2658b98a0625` (the line numbers below refer to it).
 

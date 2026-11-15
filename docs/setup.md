@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-02 - Motive: Rewritten for the managed bridge: access token, room ids, unencrypted rooms, hub registration, image.
-
 # Setup walkthrough
 
 ```

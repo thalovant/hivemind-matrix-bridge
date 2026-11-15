@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: Platform integration and the RSA identity done in the operator; the homeserver URL check is in the platform API's connector catalog change.
-
 # Suggestions: hivemind-matrix-bridge
 
 ## Platform integration (operator and API) (done in the operator, 2026-11-03)

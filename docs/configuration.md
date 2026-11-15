@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: CodeRabbit on PR #2: how a long reply is split, the mention limit on pre-1.7 servers, send tries.
-
 # Configuration
 
 Every setting comes from a flag, an environment variable or, for a secret, a file named by `<VARIABLE>_FILE`. A flag wins over its variable, the variable over its file (`resolve_options` in `hm_matrix_bridge/__main__.py`). The image passes no argument at all.

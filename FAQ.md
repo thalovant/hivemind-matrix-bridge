@@ -1,5 +1,3 @@
-Last Edit: Claude Opus 5.5 - 2026-11-03 - Motive: The managed deployment mounts both identity keys (Noise and RSA).
-
 # FAQ: hivemind-matrix-bridge
 
 ## Why does the bot not answer in my room at all?
